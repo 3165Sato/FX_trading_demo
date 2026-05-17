@@ -1,7 +1,9 @@
-package com.example.fx.demo.backend.trade;
+package com.example.fx.demo.backend.order;
 
 import com.example.fx.demo.backend.common.entity.BaseEntity;
 import com.example.fx.demo.backend.common.enums.OrderSide;
+import com.example.fx.demo.backend.common.enums.OrderStatus;
+import com.example.fx.demo.backend.common.enums.OrderType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -11,29 +13,29 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "trades")
-public class Trade extends BaseEntity {
+@Table(name = "fx_orders")
+public class FxOrder extends BaseEntity {
 
-    private Long orderId;
     private Long accountId;
+
+    // 通貨ペアはまずシンボル文字列で保持する簡易設計にする。
     private String currencyPair;
 
     @Enumerated(EnumType.STRING)
     private OrderSide side;
 
+    @Enumerated(EnumType.STRING)
+    private OrderType orderType;
+
     private BigDecimal quantity;
-    private BigDecimal executionPrice;
+    private BigDecimal orderPrice;
+
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
+
     private LocalDateTime executedAt;
 
-    protected Trade() {
-    }
-
-    public Long getOrderId() {
-        return orderId;
-    }
-
-    public void setOrderId(Long orderId) {
-        this.orderId = orderId;
+    protected FxOrder() {
     }
 
     public Long getAccountId() {
@@ -60,6 +62,14 @@ public class Trade extends BaseEntity {
         this.side = side;
     }
 
+    public OrderType getOrderType() {
+        return orderType;
+    }
+
+    public void setOrderType(OrderType orderType) {
+        this.orderType = orderType;
+    }
+
     public BigDecimal getQuantity() {
         return quantity;
     }
@@ -68,12 +78,20 @@ public class Trade extends BaseEntity {
         this.quantity = quantity;
     }
 
-    public BigDecimal getExecutionPrice() {
-        return executionPrice;
+    public BigDecimal getOrderPrice() {
+        return orderPrice;
     }
 
-    public void setExecutionPrice(BigDecimal executionPrice) {
-        this.executionPrice = executionPrice;
+    public void setOrderPrice(BigDecimal orderPrice) {
+        this.orderPrice = orderPrice;
+    }
+
+    public OrderStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(OrderStatus status) {
+        this.status = status;
     }
 
     public LocalDateTime getExecutedAt() {
