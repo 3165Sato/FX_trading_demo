@@ -13,6 +13,7 @@ public class CurrencyPair extends BaseEntity {
     private String quoteCurrency;
     private Integer priceScale;
     private Integer quantityScale;
+    private Integer pipScale;
     private Boolean enabled = true;
 
     protected CurrencyPair() {
@@ -56,6 +57,14 @@ public class CurrencyPair extends BaseEntity {
 
     public void setQuantityScale(Integer quantityScale) {
         this.quantityScale = quantityScale;
+    }
+
+    public Integer getPipScale() {
+        return pipScale;
+    }
+
+    public void setPipScale(Integer pipScale) {
+        this.pipScale = pipScale;
     }
 
     public Boolean getEnabled() {
