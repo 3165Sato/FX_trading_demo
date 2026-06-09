@@ -31,7 +31,7 @@ public class MarketRateService {
     }
 
     private MarketRateResponse toResponse(MarketRate marketRate) {
-        // DTOではCurrencyPair Entityではなくsymbol文字列だけを返す。
+        // DTO returns the symbol only, not the CurrencyPair entity.
         return new MarketRateResponse(
                 marketRate.getCurrencyPair().getSymbol(),
                 marketRate.getBid(),
