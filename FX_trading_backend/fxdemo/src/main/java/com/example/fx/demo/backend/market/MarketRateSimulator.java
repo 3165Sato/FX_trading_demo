@@ -14,15 +14,24 @@ public class MarketRateSimulator {
     private static final BigDecimal TWO = new BigDecimal("2");
 
     private final MarketRateService marketRateService;
+    private final MarketRateTickService marketRateTickService;
 
-    public MarketRateSimulator(MarketRateService marketRateService) {
+    public MarketRateSimulator(MarketRateService marketRateService, MarketRateTickService marketRateTickService) {
         this.marketRateService = marketRateService;
+        this.marketRateTickService = marketRateTickService;
     }
 
     @Scheduled(fixedRate = 1000)
     public void updateRates() {
         marketRateService.getEnabledLatestRateEntities()
                 .forEach(this::updateRate);
+    }
+
+    @Scheduled(fixedRate = 5000)
+    public void saveRateTicks() {
+        marketRateService.getEnabledLatestRateEntities()
+                .forEach(marketRateTickService::saveTick);
+        // TODO Keep roughly the latest 300 ticks per pair when retention rules are finalized.
     }
 
     private void updateRate(MarketRate marketRate) {
@@ -36,7 +45,7 @@ public class MarketRateSimulator {
         BigDecimal bid = nextMidPrice.subtract(halfSpread).setScale(priceScale, RoundingMode.HALF_UP);
         BigDecimal ask = nextMidPrice.add(halfSpread).setScale(priceScale, RoundingMode.HALF_UP);
 
-        // 外部APIには接続せず、学習用の架空レートとしてDB上の最新値だけを更新する。
+        // This is a fictional learning rate; no external market API is used.
         marketRateService.updateLatestRate(marketRate, bid, ask, nextMidPrice, Instant.now());
     }
 

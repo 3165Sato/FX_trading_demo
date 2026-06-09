@@ -22,7 +22,7 @@ public class MarketRateTick {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // チャート表示用の履歴レートを通貨ペアごとに保持する。
+    // Chart history rate for each currency pair.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "currency_pair_id", nullable = false)
     private CurrencyPair currencyPair;
