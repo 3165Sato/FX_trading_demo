@@ -4,6 +4,8 @@ import com.example.fx.demo.backend.market.dto.MarketRateResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 
@@ -28,6 +30,25 @@ public class MarketRateService {
         return marketRateRepository.findByCurrencyPair_Symbol(currencyPair)
                 .map(this::toResponse)
                 .orElseThrow(() -> new IllegalArgumentException("Latest market rate not found: " + currencyPair));
+    }
+
+    public List<MarketRate> getEnabledLatestRateEntities() {
+        return marketRateRepository.findByCurrencyPair_EnabledTrue();
+    }
+
+    @Transactional
+    public void updateLatestRate(
+            MarketRate marketRate,
+            BigDecimal bid,
+            BigDecimal ask,
+            BigDecimal midPrice,
+            Instant quotedAt
+    ) {
+        marketRate.setBid(bid);
+        marketRate.setAsk(ask);
+        marketRate.setMidPrice(midPrice);
+        marketRate.setQuotedAt(quotedAt);
+        marketRateRepository.save(marketRate);
     }
 
     private MarketRateResponse toResponse(MarketRate marketRate) {
