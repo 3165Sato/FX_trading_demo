@@ -1,6 +1,8 @@
 package com.example.fx.demo.backend.market;
 
 import com.example.fx.demo.backend.market.dto.MarketRateResponse;
+import com.example.fx.demo.backend.market.dto.MarketRateTickResponse;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,9 +16,14 @@ import java.util.List;
 public class MarketRateService {
 
     private final MarketRateRepository marketRateRepository;
+    private final MarketRateTickRepository marketRateTickRepository;
 
-    public MarketRateService(MarketRateRepository marketRateRepository) {
+    public MarketRateService(
+            MarketRateRepository marketRateRepository,
+            MarketRateTickRepository marketRateTickRepository
+    ) {
         this.marketRateRepository = marketRateRepository;
+        this.marketRateTickRepository = marketRateTickRepository;
     }
 
     public List<MarketRateResponse> getAllLatestRates() {
@@ -30,6 +37,16 @@ public class MarketRateService {
         return marketRateRepository.findByCurrencyPair_Symbol(currencyPair)
                 .map(this::toResponse)
                 .orElseThrow(() -> new IllegalArgumentException("Latest market rate not found: " + currencyPair));
+    }
+
+    public List<MarketRateTickResponse> getRecentTicks(String currencyPair, int limit) {
+        int normalizedLimit = normalizeTickLimit(limit);
+        return marketRateTickRepository
+                .findByCurrencyPair_SymbolOrderByQuotedAtDesc(currencyPair, PageRequest.of(0, normalizedLimit))
+                .stream()
+                .sorted(Comparator.comparing(MarketRateTick::getQuotedAt))
+                .map(this::toTickResponse)
+                .toList();
     }
 
     public List<MarketRate> getEnabledLatestRateEntities() {
@@ -61,5 +78,27 @@ public class MarketRateService {
                 marketRate.getSpread(),
                 marketRate.getQuotedAt()
         );
+    }
+
+    private MarketRateTickResponse toTickResponse(MarketRateTick tick) {
+        // チャート用DTOではCurrencyPair Entityではなくsymbol文字列だけを返す。
+        return new MarketRateTickResponse(
+                tick.getCurrencyPair().getSymbol(),
+                tick.getBid(),
+                tick.getAsk(),
+                tick.getMidPrice(),
+                tick.getSpread(),
+                tick.getQuotedAt()
+        );
+    }
+
+    private int normalizeTickLimit(int limit) {
+        if (limit < 1) {
+            return 1;
+        }
+        if (limit > 1000) {
+            return 1000;
+        }
+        return limit;
     }
 }
