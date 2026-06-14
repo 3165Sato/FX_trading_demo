@@ -1,4 +1,4 @@
-export type MarketRateTick = {
+export type MarketRate = {
   currencyPair: string;
   bid: number;
   ask: number;
@@ -6,6 +6,8 @@ export type MarketRateTick = {
   spread: number;
   quotedAt: string;
 };
+
+export type MarketRateTick = MarketRate;
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
@@ -33,9 +35,20 @@ export async function fetchMarketRateTicks(
   });
   const requestUrl = `${getApiBaseUrl()}/api/market/rates/ticks?${params.toString()}`;
 
+  return fetchWithRetry<MarketRateTick[]>(requestUrl);
+}
+
+export async function fetchLatestMarketRates(): Promise<MarketRate[]> {
+  const requestUrl = `${getApiBaseUrl()}/api/market/rates`;
+
+  return fetchWithRetry<MarketRate[]>(requestUrl);
+}
+
+async function fetchWithRetry<T>(requestUrl: string): Promise<T> {
+
   for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
     try {
-      return await requestTicks(requestUrl);
+      return await requestJson<T>(requestUrl);
     } catch (error) {
       const canRetry = error instanceof TypeError && attempt < MAX_REQUEST_ATTEMPTS;
 
@@ -53,7 +66,7 @@ export async function fetchMarketRateTicks(
   throw new Error(`Could not connect to the rate API at ${requestUrl}`);
 }
 
-async function requestTicks(requestUrl: string): Promise<MarketRateTick[]> {
+async function requestJson<T>(requestUrl: string): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -72,7 +85,7 @@ async function requestTicks(requestUrl: string): Promise<MarketRateTick[]> {
       );
     }
 
-    return response.json();
+    return response.json() as Promise<T>;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error(`Rate history request timed out at ${requestUrl}`);
