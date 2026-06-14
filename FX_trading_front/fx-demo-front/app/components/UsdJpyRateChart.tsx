@@ -45,11 +45,11 @@ export function UsdJpyRateChart() {
         if (!active) {
           return;
         }
-        setErrorMessage(
+        const message =
           error instanceof Error
             ? error.message
-            : "Rate history could not be loaded.",
-        );
+            : "Rate history could not be loaded.";
+        setErrorMessage(message);
       } finally {
         if (active) {
           setLoading(false);
@@ -87,7 +87,7 @@ export function UsdJpyRateChart() {
           <h1 className="text-2xl font-semibold text-zinc-950">
             USD/JPY Rate Chart
           </h1>
-          <p className="text-sm text-zinc-500">midPrice · latest 300 ticks</p>
+          <p className="text-sm text-zinc-500">midPrice / latest 300 ticks</p>
         </div>
         <div className="text-sm text-zinc-500">
           {chartData.length > 0 ? `${chartData.length} points` : "No points"}
