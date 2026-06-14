@@ -10,6 +10,7 @@ import {
 } from "../../lib/marketRateTicks";
 import { MarketRateCard } from "./MarketRateCard";
 import { MarketRateChart } from "./MarketRateChart";
+import { SpreadMonitorCard } from "./SpreadMonitorCard";
 
 const MONITORED_PAIRS = ["USD/JPY", "EUR/JPY", "EUR/USD"];
 const DEFAULT_PAIR = "USD/JPY";
@@ -100,6 +101,10 @@ export function MarketMonitorDashboard() {
     [rates],
   );
   const recentTicks = useMemo(() => ticks.slice(-10).reverse(), [ticks]);
+  const selectedRate = useMemo(
+    () => rates.find((rate) => rate.currencyPair === selectedPair),
+    [rates, selectedPair],
+  );
   const connected = rates.length > 0 && ratesError === null;
   const errorMessage = ratesError ?? ticksError;
 
@@ -205,7 +210,7 @@ export function MarketMonitorDashboard() {
             <div className="flex items-center justify-between border-b border-[#2a353e] px-4 py-3 sm:px-5">
               <div>
                 <h2 className="font-mono text-sm font-semibold text-zinc-100">
-                  {selectedPair} Mid Price
+                  {selectedPair} Bid / Ask / Mid
                 </h2>
                 <p className="mt-1 text-xs text-zinc-500">
                   Recent simulated tick history
@@ -227,36 +232,45 @@ export function MarketMonitorDashboard() {
             )}
           </section>
 
-          <section className="min-w-0 border border-[#2a353e] bg-[#0e1419]">
-            <div className="border-b border-[#2a353e] px-4 py-3">
-              <h2 className="text-sm font-semibold text-zinc-100">Tick log</h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                Latest 10 / {selectedPair}
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed font-mono text-xs">
-                <thead className="text-left text-[10px] uppercase text-zinc-600">
-                  <tr className="border-b border-[#26313a]">
-                    <th className="w-[28%] px-3 py-3 font-medium">Time</th>
-                    <th className="w-[24%] px-2 py-3 text-right font-medium">Bid</th>
-                    <th className="w-[24%] px-2 py-3 text-right font-medium">Ask</th>
-                    <th className="w-[24%] px-3 py-3 text-right font-medium">Mid</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentTicks.map((tick) => (
-                    <TickRow key={`${tick.quotedAt}-${tick.midPrice}`} tick={tick} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {!ticksLoading && recentTicks.length === 0 && (
-              <div className="px-4 py-12 text-center text-sm text-zinc-600">
-                Waiting for ticks
+          <aside className="flex min-w-0 flex-col gap-6">
+            <SpreadMonitorCard
+              rate={selectedRate}
+              ticks={ticks}
+              currencyPair={selectedPair}
+            />
+
+            <section className="min-w-0 border border-[#2a353e] bg-[#0e1419]">
+              <div className="border-b border-[#2a353e] px-4 py-3">
+                <h2 className="text-sm font-semibold text-zinc-100">Tick log</h2>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Latest 10 / {selectedPair}
+                </p>
               </div>
-            )}
-          </section>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[350px] table-fixed font-mono text-[11px]">
+                  <thead className="text-left text-[9px] uppercase text-zinc-600">
+                    <tr className="border-b border-[#26313a]">
+                      <th className="w-[22%] px-3 py-3 font-medium">Time</th>
+                      <th className="w-[20%] px-1 py-3 text-right font-medium">Bid</th>
+                      <th className="w-[20%] px-1 py-3 text-right font-medium">Ask</th>
+                      <th className="w-[20%] px-1 py-3 text-right font-medium">Mid</th>
+                      <th className="w-[18%] px-3 py-3 text-right font-medium">Spr</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentTicks.map((tick) => (
+                      <TickRow key={`${tick.quotedAt}-${tick.midPrice}`} tick={tick} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!ticksLoading && recentTicks.length === 0 && (
+                <div className="px-4 py-12 text-center text-sm text-zinc-600">
+                  Waiting for ticks
+                </div>
+              )}
+            </section>
+          </aside>
         </div>
       </div>
     </main>
@@ -294,10 +308,13 @@ function TickRow({ tick }: { tick: MarketRateTick }) {
   return (
     <tr className="border-b border-[#202930] text-zinc-300 last:border-0 hover:bg-white/[0.025]">
       <td className="px-3 py-3 text-zinc-500">{formatTime(tick.quotedAt)}</td>
-      <td className="px-2 py-3 text-right">{tick.bid.toFixed(scale)}</td>
-      <td className="px-2 py-3 text-right">{tick.ask.toFixed(scale)}</td>
-      <td className="px-3 py-3 text-right text-emerald-300">
+      <td className="px-1 py-3 text-right text-sky-300">{tick.bid.toFixed(scale)}</td>
+      <td className="px-1 py-3 text-right text-rose-300">{tick.ask.toFixed(scale)}</td>
+      <td className="px-1 py-3 text-right text-emerald-300">
         {tick.midPrice.toFixed(scale)}
+      </td>
+      <td className="px-3 py-3 text-right text-amber-200">
+        {tick.spread.toFixed(scale)}
       </td>
     </tr>
   );

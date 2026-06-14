@@ -16,7 +16,7 @@ export function MarketRateCard({
   const priceScale = rate.currencyPair === "EUR/USD" ? 5 : 3;
   const direction = change > 0 ? "up" : change < 0 ? "down" : "flat";
   const directionText =
-    direction === "up" ? "▲" : direction === "down" ? "▼" : "-";
+    direction === "up" ? "UP" : direction === "down" ? "DOWN" : "FLAT";
   const directionClass =
     direction === "up"
       ? "text-emerald-400"
