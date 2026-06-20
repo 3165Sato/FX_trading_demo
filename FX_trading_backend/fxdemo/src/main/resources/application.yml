@@ -42,3 +42,28 @@ demofx:
       - "Fictional risk sentiment changes abruptly"
       - "Fictional central bank commentary moves simulated prices"
       - "Fictional liquidity concern widens simulated spreads"
+  alerts:
+    enabled: true
+    evaluationIntervalSeconds: 3
+    history:
+      maxEntries: 100
+    rules:
+      spread:
+        enabled: true
+        limit: 60
+      rapidMove:
+        enabled: true
+        lookbackSeconds: 15
+        warnBps: 30
+        criticalBps: 60
+      staleData:
+        enabled: true
+        warnSeconds: 10
+        criticalSeconds: 30
+      crossedQuote:
+        enabled: true
+      volatilitySurge:
+        enabled: false
+        lookbackSeconds: 60
+        baselineLookbackSeconds: 600
+        baselineMultiplier: 3.0

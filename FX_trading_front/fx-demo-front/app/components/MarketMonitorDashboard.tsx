@@ -4,12 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   fetchLatestMarketRates,
+  fetchMarketAlerts,
   fetchMarketRateTicks,
   fetchNewsEvents,
   getSpreadStats,
   triggerNewsEvent,
   type MarketRate,
   type MarketRateTick,
+  type AlertSeverity,
+  type MarketAlert,
   type NewsDirection,
   type NewsEvent,
   type SpreadStats,
@@ -22,10 +25,12 @@ const DEFAULT_PAIR = "USD/JPY";
 const TICK_LIMIT = 300;
 const SPREAD_STATS_LIMIT = 60;
 const NEWS_EVENT_LIMIT = 10;
+const ALERT_LIMIT = 50;
 
 export function MarketMonitorDashboard() {
   const [rates, setRates] = useState<MarketRate[]>([]);
   const [ticks, setTicks] = useState<MarketRateTick[]>([]);
+  const [alerts, setAlerts] = useState<MarketAlert[]>([]);
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [selectedPair, setSelectedPair] = useState(DEFAULT_PAIR);
@@ -34,6 +39,7 @@ export function MarketMonitorDashboard() {
   const [ticksLoading, setTicksLoading] = useState(true);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [ticksError, setTicksError] = useState<string | null>(null);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
   const [spreadStatsLoading, setSpreadStatsLoading] = useState(true);
@@ -107,6 +113,16 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadAlerts = useCallback(async () => {
+    try {
+      const nextAlerts = await fetchMarketAlerts(ALERT_LIMIT);
+      setAlerts(nextAlerts);
+      setAlertsError(null);
+    } catch (error) {
+      setAlertsError(getErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -124,6 +140,15 @@ export function MarketMonitorDashboard() {
       window.clearInterval(intervalId);
     };
   }, [loadNewsEvents]);
+
+  useEffect(() => {
+    const initialTimeoutId = window.setTimeout(loadAlerts, 0);
+    const intervalId = window.setInterval(loadAlerts, 3000);
+    return () => {
+      window.clearTimeout(initialTimeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [loadAlerts]);
 
   useEffect(() => {
     const loadSelectedMarketData = () => {
@@ -156,8 +181,9 @@ export function MarketMonitorDashboard() {
     [rates],
   );
   const recentTicks = useMemo(() => ticks.slice(-10).reverse(), [ticks]);
+  const activeAlerts = useMemo(() => alerts.filter((alert) => alert.active), [alerts]);
   const connected = rates.length > 0 && ratesError === null;
-  const errorMessage = ratesError ?? ticksError ?? spreadStatsError ?? newsEventsError;
+  const errorMessage = ratesError ?? ticksError ?? spreadStatsError ?? alertsError ?? newsEventsError;
 
   const triggerSelectedNewsEvent = async (direction: NewsDirection) => {
     setNewsSubmittingDirection(direction);
@@ -167,6 +193,7 @@ export function MarketMonitorDashboard() {
       setNewsEventsError(null);
       void loadRates();
       void loadSpreadStats();
+      void loadAlerts();
     } catch (error) {
       setNewsEventsError(getErrorMessage(error));
     } finally {
@@ -181,6 +208,7 @@ export function MarketMonitorDashboard() {
     void loadRates();
     void loadTicks();
     void loadSpreadStats();
+    void loadAlerts();
     void loadNewsEvents();
   };
 
@@ -219,7 +247,7 @@ export function MarketMonitorDashboard() {
           />
           <StatusItem label="Active pairs" value={String(rates.length)} />
           <StatusItem label="Tick interval" value="5s" />
-          <StatusItem label="Rate interval" value="1s" />
+          <StatusItem label="Active alerts" value={String(activeAlerts.length)} accent={activeAlerts.length > 0 ? "negative" : undefined} />
         </div>
       </section>
 
@@ -302,6 +330,8 @@ export function MarketMonitorDashboard() {
           </section>
 
           <aside className="flex min-w-0 flex-col gap-6">
+            <AlertPanel alerts={alerts} activeCount={activeAlerts.length} />
+
             <NewsEventPanel
               activePair={activePair}
               events={newsEvents}
@@ -352,6 +382,80 @@ export function MarketMonitorDashboard() {
       </div>
     </main>
   );
+}
+
+function AlertPanel({
+  alerts,
+  activeCount,
+}: {
+  alerts: MarketAlert[];
+  activeCount: number;
+}) {
+  return (
+    <section className="border border-[#2a353e] bg-[#0e1419]">
+      <div className="flex items-start justify-between border-b border-[#2a353e] px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-100">Anomaly alerts</h2>
+          <p className="mt-1 text-xs text-zinc-500">Rule-based monitor</p>
+        </div>
+        <span
+          className={`border px-2 py-1 font-mono text-[10px] uppercase ${
+            activeCount > 0
+              ? "border-rose-400/70 text-rose-300"
+              : "border-zinc-500/50 text-zinc-400"
+          }`}
+        >
+          Active: {activeCount}
+        </span>
+      </div>
+      <div className="flex max-h-80 flex-col gap-2 overflow-y-auto px-4 py-3">
+        {alerts.length === 0 ? (
+          <div className="py-8 text-center text-xs text-zinc-600">No alerts</div>
+        ) : (
+          alerts.map((alert) => <AlertRow key={alert.id} alert={alert} />)
+        )}
+      </div>
+    </section>
+  );
+}
+
+function AlertRow({ alert }: { alert: MarketAlert }) {
+  return (
+    <div
+      className={`border px-3 py-2 ${
+        alert.active
+          ? "border-rose-500/40 bg-rose-950/20"
+          : "border-[#26313a] bg-[#0a1014]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-xs text-zinc-200">
+            {alert.currencyPair} / {alert.type}
+          </div>
+          <div className="mt-1 text-xs text-zinc-500">{alert.message}</div>
+        </div>
+        <span className={`shrink-0 font-mono text-[10px] ${getAlertSeverityClass(alert.severity)}`}>
+          {alert.severity}
+        </span>
+      </div>
+      <div className="mt-2 flex items-center justify-between font-mono text-[10px] text-zinc-600">
+        <span>{formatTime(alert.raisedAt)}</span>
+        <span>{alert.active ? "ACTIVE" : `RESOLVED ${alert.resolvedAt ? formatTime(alert.resolvedAt) : ""}`}</span>
+      </div>
+    </div>
+  );
+}
+
+function getAlertSeverityClass(severity: AlertSeverity): string {
+  switch (severity) {
+    case "CRITICAL":
+      return "text-rose-300";
+    case "WARNING":
+      return "text-amber-300";
+    case "INFO":
+      return "text-sky-300";
+  }
 }
 
 function NewsEventPanel({

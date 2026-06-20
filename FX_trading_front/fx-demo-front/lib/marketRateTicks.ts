@@ -47,6 +47,20 @@ export type NewsEvent = {
   active: boolean;
 };
 
+export type AlertSeverity = "INFO" | "WARNING" | "CRITICAL";
+
+export type MarketAlert = {
+  id: string;
+  type: string;
+  currencyPair: string;
+  severity: AlertSeverity;
+  message: string;
+  changePips: number | null;
+  raisedAt: string;
+  resolvedAt: string | null;
+  active: boolean;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -121,6 +135,15 @@ export async function fetchNewsEvents(limit = 10): Promise<NewsEvent[]> {
   const requestUrl = `${getApiBaseUrl()}/api/market/news/events?${params.toString()}`;
 
   return fetchWithRetry<NewsEvent[]>(requestUrl);
+}
+
+export async function fetchMarketAlerts(limit = 50): Promise<MarketAlert[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+  const requestUrl = `${getApiBaseUrl()}/api/market/alerts?${params.toString()}`;
+
+  return fetchWithRetry<MarketAlert[]>(requestUrl);
 }
 
 async function fetchWithRetry<T>(
