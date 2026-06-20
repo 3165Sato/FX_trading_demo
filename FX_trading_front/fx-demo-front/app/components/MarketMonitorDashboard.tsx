@@ -5,8 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchLatestMarketRates,
   fetchMarketRateTicks,
+  getSpreadStats,
   type MarketRate,
   type MarketRateTick,
+  type SpreadStats,
 } from "../../lib/marketRateTicks";
 import { MarketRateCard } from "./MarketRateCard";
 import { MarketRateChart } from "./MarketRateChart";
@@ -15,16 +17,20 @@ import { SpreadMonitorCard } from "./SpreadMonitorCard";
 const MONITORED_PAIRS = ["USD/JPY", "EUR/JPY", "EUR/USD"];
 const DEFAULT_PAIR = "USD/JPY";
 const TICK_LIMIT = 300;
+const SPREAD_STATS_LIMIT = 60;
 
 export function MarketMonitorDashboard() {
   const [rates, setRates] = useState<MarketRate[]>([]);
   const [ticks, setTicks] = useState<MarketRateTick[]>([]);
+  const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [selectedPair, setSelectedPair] = useState(DEFAULT_PAIR);
   const [rateChanges, setRateChanges] = useState<Record<string, number>>({});
   const [ratesLoading, setRatesLoading] = useState(true);
   const [ticksLoading, setTicksLoading] = useState(true);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [ticksError, setTicksError] = useState<string | null>(null);
+  const [spreadStatsLoading, setSpreadStatsLoading] = useState(true);
+  const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const previousRatesRef = useRef<Map<string, number>>(new Map());
 
@@ -65,6 +71,18 @@ export function MarketMonitorDashboard() {
     }
   }, [selectedPair]);
 
+  const loadSpreadStats = useCallback(async () => {
+    try {
+      const nextStats = await getSpreadStats(selectedPair, SPREAD_STATS_LIMIT);
+      setSpreadStats(nextStats);
+      setSpreadStatsError(null);
+    } catch (error) {
+      setSpreadStatsError(getErrorMessage(error));
+    } finally {
+      setSpreadStatsLoading(false);
+    }
+  }, [selectedPair]);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -75,13 +93,17 @@ export function MarketMonitorDashboard() {
   }, [loadRates]);
 
   useEffect(() => {
-    const initialTimeoutId = window.setTimeout(loadTicks, 0);
-    const intervalId = window.setInterval(loadTicks, 5000);
+    const loadSelectedMarketData = () => {
+      void loadTicks();
+      void loadSpreadStats();
+    };
+    const initialTimeoutId = window.setTimeout(loadSelectedMarketData, 0);
+    const intervalId = window.setInterval(loadSelectedMarketData, 5000);
     return () => {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadTicks]);
+  }, [loadSpreadStats, loadTicks]);
 
   const selectCurrencyPair = (currencyPair: string) => {
     if (currencyPair === selectedPair) {
@@ -89,8 +111,11 @@ export function MarketMonitorDashboard() {
     }
     setSelectedPair(currencyPair);
     setTicks([]);
+    setSpreadStats(undefined);
     setTicksLoading(true);
+    setSpreadStatsLoading(true);
     setTicksError(null);
+    setSpreadStatsError(null);
   };
 
   const monitoredRates = useMemo(
@@ -101,18 +126,16 @@ export function MarketMonitorDashboard() {
     [rates],
   );
   const recentTicks = useMemo(() => ticks.slice(-10).reverse(), [ticks]);
-  const selectedRate = useMemo(
-    () => rates.find((rate) => rate.currencyPair === selectedPair),
-    [rates, selectedPair],
-  );
   const connected = rates.length > 0 && ratesError === null;
-  const errorMessage = ratesError ?? ticksError;
+  const errorMessage = ratesError ?? ticksError ?? spreadStatsError;
 
   const retry = () => {
     setRatesLoading(rates.length === 0);
     setTicksLoading(ticks.length === 0);
+    setSpreadStatsLoading(spreadStats === undefined);
     void loadRates();
     void loadTicks();
+    void loadSpreadStats();
   };
 
   return (
@@ -234,9 +257,10 @@ export function MarketMonitorDashboard() {
 
           <aside className="flex min-w-0 flex-col gap-6">
             <SpreadMonitorCard
-              rate={selectedRate}
-              ticks={ticks}
               currencyPair={selectedPair}
+              error={spreadStatsError}
+              loading={spreadStatsLoading}
+              stats={spreadStats}
             />
 
             <section className="min-w-0 border border-[#2a353e] bg-[#0e1419]">

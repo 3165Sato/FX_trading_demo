@@ -24,9 +24,9 @@ public class MarketDataInitializer implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
-        CurrencyPair usdJpy = findOrCreateCurrencyPair("USD/JPY", "USD", "JPY", 3, 0, 3);
-        CurrencyPair eurJpy = findOrCreateCurrencyPair("EUR/JPY", "EUR", "JPY", 3, 0, 3);
-        CurrencyPair eurUsd = findOrCreateCurrencyPair("EUR/USD", "EUR", "USD", 5, 0, 5);
+        CurrencyPair usdJpy = findOrCreateCurrencyPair("USD/JPY", "USD", "JPY", 3, 0, 2);
+        CurrencyPair eurJpy = findOrCreateCurrencyPair("EUR/JPY", "EUR", "JPY", 3, 0, 2);
+        CurrencyPair eurUsd = findOrCreateCurrencyPair("EUR/USD", "EUR", "USD", 5, 0, 4);
 
         createMarketRateIfAbsent(
                 usdJpy,

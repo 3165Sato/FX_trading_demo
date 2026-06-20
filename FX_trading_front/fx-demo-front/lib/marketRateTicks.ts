@@ -9,6 +9,28 @@ export type MarketRate = {
 
 export type MarketRateTick = MarketRate;
 
+export type SpreadStatus =
+  | "NORMAL"
+  | "WIDE"
+  | "VERY_WIDE"
+  | "INSUFFICIENT_DATA";
+
+export type SpreadStats = {
+  currencyPair: string;
+  bid: number;
+  ask: number;
+  spread: number;
+  spreadPips: number | null;
+  averageSpreadPips: number | null;
+  minSpreadPips: number | null;
+  maxSpreadPips: number | null;
+  status: SpreadStatus;
+  sampleCount: number;
+  limit: number;
+  pipScale: number | null;
+  quotedAt: string;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -42,6 +64,19 @@ export async function fetchLatestMarketRates(): Promise<MarketRate[]> {
   const requestUrl = `${getApiBaseUrl()}/api/market/rates`;
 
   return fetchWithRetry<MarketRate[]>(requestUrl);
+}
+
+export async function getSpreadStats(
+  currencyPair: string,
+  limit = 60,
+): Promise<SpreadStats> {
+  const params = new URLSearchParams({
+    currencyPair,
+    limit: String(limit),
+  });
+  const requestUrl = `${getApiBaseUrl()}/api/market/spread/stats?${params.toString()}`;
+
+  return fetchWithRetry<SpreadStats>(requestUrl);
 }
 
 async function fetchWithRetry<T>(requestUrl: string): Promise<T> {
