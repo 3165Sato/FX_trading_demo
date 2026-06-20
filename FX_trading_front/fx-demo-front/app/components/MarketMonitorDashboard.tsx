@@ -5,9 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchLatestMarketRates,
   fetchMarketRateTicks,
+  fetchNewsEvents,
   getSpreadStats,
+  triggerNewsEvent,
   type MarketRate,
   type MarketRateTick,
+  type NewsDirection,
+  type NewsEvent,
   type SpreadStats,
 } from "../../lib/marketRateTicks";
 import { MarketRateCard } from "./MarketRateCard";
@@ -17,10 +21,12 @@ import { SpreadMonitorCard } from "./SpreadMonitorCard";
 const DEFAULT_PAIR = "USD/JPY";
 const TICK_LIMIT = 300;
 const SPREAD_STATS_LIMIT = 60;
+const NEWS_EVENT_LIMIT = 10;
 
 export function MarketMonitorDashboard() {
   const [rates, setRates] = useState<MarketRate[]>([]);
   const [ticks, setTicks] = useState<MarketRateTick[]>([]);
+  const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [selectedPair, setSelectedPair] = useState(DEFAULT_PAIR);
   const [rateChanges, setRateChanges] = useState<Record<string, number>>({});
@@ -28,6 +34,8 @@ export function MarketMonitorDashboard() {
   const [ticksLoading, setTicksLoading] = useState(true);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [ticksError, setTicksError] = useState<string | null>(null);
+  const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
+  const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
   const [spreadStatsLoading, setSpreadStatsLoading] = useState(true);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -89,6 +97,16 @@ export function MarketMonitorDashboard() {
     }
   }, [activePair]);
 
+  const loadNewsEvents = useCallback(async () => {
+    try {
+      const nextEvents = await fetchNewsEvents(NEWS_EVENT_LIMIT);
+      setNewsEvents(nextEvents);
+      setNewsEventsError(null);
+    } catch (error) {
+      setNewsEventsError(getErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -97,6 +115,15 @@ export function MarketMonitorDashboard() {
       window.clearInterval(intervalId);
     };
   }, [loadRates]);
+
+  useEffect(() => {
+    const initialTimeoutId = window.setTimeout(loadNewsEvents, 0);
+    const intervalId = window.setInterval(loadNewsEvents, 5000);
+    return () => {
+      window.clearTimeout(initialTimeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [loadNewsEvents]);
 
   useEffect(() => {
     const loadSelectedMarketData = () => {
@@ -130,7 +157,22 @@ export function MarketMonitorDashboard() {
   );
   const recentTicks = useMemo(() => ticks.slice(-10).reverse(), [ticks]);
   const connected = rates.length > 0 && ratesError === null;
-  const errorMessage = ratesError ?? ticksError ?? spreadStatsError;
+  const errorMessage = ratesError ?? ticksError ?? spreadStatsError ?? newsEventsError;
+
+  const triggerSelectedNewsEvent = async (direction: NewsDirection) => {
+    setNewsSubmittingDirection(direction);
+    try {
+      const event = await triggerNewsEvent(activePair, direction);
+      setNewsEvents((current) => [event, ...current].slice(0, NEWS_EVENT_LIMIT));
+      setNewsEventsError(null);
+      void loadRates();
+      void loadSpreadStats();
+    } catch (error) {
+      setNewsEventsError(getErrorMessage(error));
+    } finally {
+      setNewsSubmittingDirection(null);
+    }
+  };
 
   const retry = () => {
     setRatesLoading(rates.length === 0);
@@ -139,6 +181,7 @@ export function MarketMonitorDashboard() {
     void loadRates();
     void loadTicks();
     void loadSpreadStats();
+    void loadNewsEvents();
   };
 
   return (
@@ -259,6 +302,13 @@ export function MarketMonitorDashboard() {
           </section>
 
           <aside className="flex min-w-0 flex-col gap-6">
+            <NewsEventPanel
+              activePair={activePair}
+              events={newsEvents}
+              submittingDirection={newsSubmittingDirection}
+              onTrigger={triggerSelectedNewsEvent}
+            />
+
             <SpreadMonitorCard
               currencyPair={activePair}
               error={spreadStatsError}
@@ -301,6 +351,105 @@ export function MarketMonitorDashboard() {
         </div>
       </div>
     </main>
+  );
+}
+
+function NewsEventPanel({
+  activePair,
+  events,
+  submittingDirection,
+  onTrigger,
+}: {
+  activePair: string;
+  events: NewsEvent[];
+  submittingDirection: NewsDirection | null;
+  onTrigger: (direction: NewsDirection) => void;
+}) {
+  return (
+    <section className="border border-[#2a353e] bg-[#0e1419]">
+      <div className="border-b border-[#2a353e] px-4 py-3">
+        <h2 className="text-sm font-semibold text-zinc-100">Fictional news event</h2>
+        <p className="mt-1 text-xs text-zinc-500">{activePair} manual trigger</p>
+      </div>
+      <div className="grid grid-cols-2 gap-px bg-[#26313a]">
+        <NewsTriggerButton
+          direction="UP"
+          disabled={submittingDirection !== null}
+          loading={submittingDirection === "UP"}
+          onTrigger={onTrigger}
+        />
+        <NewsTriggerButton
+          direction="DOWN"
+          disabled={submittingDirection !== null}
+          loading={submittingDirection === "DOWN"}
+          onTrigger={onTrigger}
+        />
+      </div>
+      <div className="border-t border-[#2a353e] px-4 py-3">
+        <div className="mb-3 text-[10px] uppercase text-zinc-600">Recent events</div>
+        <div className="flex max-h-60 flex-col gap-2 overflow-y-auto">
+          {events.length === 0 ? (
+            <div className="py-6 text-center text-xs text-zinc-600">No events yet</div>
+          ) : (
+            events.map((event) => <NewsEventRow key={event.id} event={event} />)
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function NewsTriggerButton({
+  direction,
+  disabled,
+  loading,
+  onTrigger,
+}: {
+  direction: NewsDirection;
+  disabled: boolean;
+  loading: boolean;
+  onTrigger: (direction: NewsDirection) => void;
+}) {
+  const directionClass =
+    direction === "UP"
+      ? "text-emerald-300 hover:bg-emerald-400/10"
+      : "text-rose-300 hover:bg-rose-400/10";
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onTrigger(direction)}
+      className={`bg-[#0e1419] px-4 py-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${directionClass}`}
+    >
+      <div className="font-mono text-lg font-semibold">
+        {loading ? "Sending..." : direction}
+      </div>
+      <div className="mt-1 text-[10px] uppercase text-zinc-600">
+        Jump + spread shock
+      </div>
+    </button>
+  );
+}
+
+function NewsEventRow({ event }: { event: NewsEvent }) {
+  const directionClass = event.direction === "UP" ? "text-emerald-300" : "text-rose-300";
+  return (
+    <div className="border border-[#26313a] bg-[#0a1014] px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-mono text-xs text-zinc-200">{event.currencyPair}</span>
+        <span className={`font-mono text-[11px] ${directionClass}`}>
+          {event.direction} {event.magnitudeBps}bps
+        </span>
+      </div>
+      <div className="mt-1 line-clamp-2 text-xs text-zinc-500">{event.headline}</div>
+      <div className="mt-2 flex items-center justify-between font-mono text-[10px] text-zinc-600">
+        <span>{formatTime(event.startedAt)}</span>
+        <span className={event.active ? "text-amber-300" : "text-zinc-600"}>
+          {event.active ? "ACTIVE" : "ENDED"}
+        </span>
+      </div>
+    </div>
   );
 }
 

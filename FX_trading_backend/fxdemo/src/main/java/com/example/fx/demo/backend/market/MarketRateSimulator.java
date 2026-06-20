@@ -18,17 +18,21 @@ public class MarketRateSimulator {
     private final MarketRateService marketRateService;
     private final MarketRateTickService marketRateTickService;
     private final MarketSimulatorProperties simulatorProperties;
+    private final NewsEventService newsEventService;
     private final Random random = new Random();
     private final Map<String, BigDecimal> basePrices = new ConcurrentHashMap<>();
+    private final Map<String, BigDecimal> baseSpreads = new ConcurrentHashMap<>();
 
     public MarketRateSimulator(
             MarketRateService marketRateService,
             MarketRateTickService marketRateTickService,
-            MarketSimulatorProperties simulatorProperties
+            MarketSimulatorProperties simulatorProperties,
+            NewsEventService newsEventService
     ) {
         this.marketRateService = marketRateService;
         this.marketRateTickService = marketRateTickService;
         this.simulatorProperties = simulatorProperties;
+        this.newsEventService = newsEventService;
     }
 
     @Scheduled(fixedRate = 1000)
@@ -46,18 +50,20 @@ public class MarketRateSimulator {
 
     private void updateRate(MarketRate marketRate) {
         CurrencyPair currencyPair = marketRate.getCurrencyPair();
+        Instant quotedAt = Instant.now();
+        EventModifiers modifiers = newsEventService.consumeTick(currencyPair.getSymbol(), quotedAt);
         int priceScale = currencyPair.getPriceScale();
-        BigDecimal spread = marketRate.getSpread();
-        BigDecimal nextMidPrice = nextMidPrice(marketRate, currencyPair);
+        BigDecimal spread = nextSpread(marketRate, currencyPair, modifiers);
+        BigDecimal nextMidPrice = nextMidPrice(marketRate, currencyPair, modifiers);
         BigDecimal halfSpread = spread.divide(TWO, priceScale + 4, RoundingMode.HALF_UP);
         BigDecimal bid = nextMidPrice.subtract(halfSpread).setScale(priceScale, RoundingMode.HALF_UP);
         BigDecimal ask = nextMidPrice.add(halfSpread).setScale(priceScale, RoundingMode.HALF_UP);
 
         // This is a fictional learning rate; no external market API is used.
-        marketRateService.updateLatestRate(marketRate, bid, ask, nextMidPrice, Instant.now());
+        marketRateService.updateLatestRate(marketRate, bid, ask, nextMidPrice, spread, quotedAt);
     }
 
-    private BigDecimal nextMidPrice(MarketRate marketRate, CurrencyPair currencyPair) {
+    private BigDecimal nextMidPrice(MarketRate marketRate, CurrencyPair currencyPair, EventModifiers modifiers) {
         String symbol = currencyPair.getSymbol();
         int priceScale = currencyPair.getPriceScale();
         BigDecimal basePrice = resolveBasePrice(symbol, marketRate.getMidPrice());
@@ -67,11 +73,22 @@ public class MarketRateSimulator {
         double base = basePrice.doubleValue();
         double deviation = prevMid - base;
         double reversion = -safeDouble(tuning.getReversionStrength()) * deviation;
-        double shock = prevMid * (safeDouble(tuning.getVolatilityBps()) / 10000.0) * random.nextGaussian();
-        double rawMid = prevMid + reversion + shock;
-        double clampedMid = clamp(rawMid, base, tuning.getMaxDeviationBps());
+        double shock = prevMid
+                * (safeDouble(tuning.getVolatilityBps()) * modifiers.volatilityMultiplier() / 10000.0)
+                * random.nextGaussian();
+        double jump = prevMid * (modifiers.signedJumpBps().doubleValue() / 10000.0);
+        double rawMid = prevMid + reversion + shock + jump;
+        double clampedMid = modifiers.clampSuppressed() ? rawMid : clamp(rawMid, base, tuning.getMaxDeviationBps());
 
         return BigDecimal.valueOf(clampedMid).setScale(priceScale, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal nextSpread(MarketRate marketRate, CurrencyPair currencyPair, EventModifiers modifiers) {
+        int priceScale = currencyPair.getPriceScale();
+        BigDecimal baseSpread = resolveBaseSpread(currencyPair.getSymbol(), marketRate.getSpread());
+        return baseSpread
+                .multiply(BigDecimal.valueOf(modifiers.spreadMultiplier()))
+                .setScale(priceScale, RoundingMode.HALF_UP);
     }
 
     private BigDecimal resolveBasePrice(String symbol, BigDecimal currentMidPrice) {
@@ -79,6 +96,10 @@ public class MarketRateSimulator {
                 symbol,
                 key -> simulatorProperties.configuredBasePrice(key).orElse(currentMidPrice)
         );
+    }
+
+    private BigDecimal resolveBaseSpread(String symbol, BigDecimal currentSpread) {
+        return baseSpreads.computeIfAbsent(symbol, key -> currentSpread);
     }
 
     private double clamp(double rawMid, double basePrice, Double maxDeviationBps) {

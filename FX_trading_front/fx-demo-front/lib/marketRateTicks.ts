@@ -31,6 +31,22 @@ export type SpreadStats = {
   quotedAt: string;
 };
 
+export type NewsDirection = "UP" | "DOWN";
+
+export type NewsEvent = {
+  id: string;
+  currencyPair: string;
+  direction: NewsDirection;
+  magnitudeBps: number;
+  volatilityMultiplier: number;
+  spreadMultiplier: number;
+  durationSeconds: number;
+  headline: string;
+  startedAt: string;
+  endsAt: string;
+  active: boolean;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -79,11 +95,42 @@ export async function getSpreadStats(
   return fetchWithRetry<SpreadStats>(requestUrl);
 }
 
-async function fetchWithRetry<T>(requestUrl: string): Promise<T> {
+export async function triggerNewsEvent(
+  currencyPair: string,
+  direction: NewsDirection,
+): Promise<NewsEvent> {
+  const requestUrl = `${getApiBaseUrl()}/api/market/news/events`;
+
+  return fetchWithRetry<NewsEvent>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      currencyPair,
+      direction,
+      magnitudeBps: 100,
+      durationSeconds: 30,
+      volatilityMultiplier: 5.0,
+      spreadMultiplier: 4.0,
+    }),
+  });
+}
+
+export async function fetchNewsEvents(limit = 10): Promise<NewsEvent[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+  const requestUrl = `${getApiBaseUrl()}/api/market/news/events?${params.toString()}`;
+
+  return fetchWithRetry<NewsEvent[]>(requestUrl);
+}
+
+async function fetchWithRetry<T>(
+  requestUrl: string,
+  init?: RequestInit,
+): Promise<T> {
 
   for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
     try {
-      return await requestJson<T>(requestUrl);
+      return await requestJson<T>(requestUrl, init);
     } catch (error) {
       const canRetry = error instanceof TypeError && attempt < MAX_REQUEST_ATTEMPTS;
 
@@ -101,7 +148,10 @@ async function fetchWithRetry<T>(requestUrl: string): Promise<T> {
   throw new Error(`Could not connect to the rate API at ${requestUrl}`);
 }
 
-async function requestJson<T>(requestUrl: string): Promise<T> {
+async function requestJson<T>(
+  requestUrl: string,
+  init?: RequestInit,
+): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -110,8 +160,13 @@ async function requestJson<T>(requestUrl: string): Promise<T> {
 
   try {
     const response = await fetch(requestUrl, {
+      ...init,
       cache: "no-store",
       signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
     });
 
     if (!response.ok) {

@@ -23,3 +23,22 @@ demofx:
         basePrice: 0.88000
       - symbol: "USD/CAD"
         basePrice: 1.37000
+  news:
+    enabled: true
+    defaults:
+      magnitudeBps: 60
+      durationSeconds: 30
+      volatilityMultiplier: 5.0
+      spreadMultiplier: 4.0
+    limits:
+      maxMagnitudeBps: 500
+      maxDurationSeconds: 300
+    auto:
+      enabled: false
+      probabilityPerMinute: 0.2
+    headlines:
+      - "Fictional policy outlook shifts market expectations"
+      - "Fictional economic indicator surprises market participants"
+      - "Fictional risk sentiment changes abruptly"
+      - "Fictional central bank commentary moves simulated prices"
+      - "Fictional liquidity concern widens simulated spreads"

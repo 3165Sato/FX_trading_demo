@@ -59,11 +59,13 @@ public class MarketRateService {
             BigDecimal bid,
             BigDecimal ask,
             BigDecimal midPrice,
+            BigDecimal spread,
             Instant quotedAt
     ) {
         marketRate.setBid(bid);
         marketRate.setAsk(ask);
         marketRate.setMidPrice(midPrice);
+        marketRate.setSpread(spread);
         marketRate.setQuotedAt(quotedAt);
         marketRateRepository.save(marketRate);
     }
