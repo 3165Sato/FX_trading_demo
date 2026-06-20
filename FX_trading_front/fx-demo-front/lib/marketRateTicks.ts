@@ -61,6 +61,33 @@ export type MarketAlert = {
   active: boolean;
 };
 
+export type OrderSide = "BUY" | "SELL";
+
+export type TradeSummary = {
+  id: number;
+  orderId: number;
+  currencyPair: string;
+  side: OrderSide;
+  quantity: number;
+  price: number;
+  executedAt: string;
+};
+
+export type OrderSummary = {
+  id: number;
+  currencyPair: string;
+  side: OrderSide;
+  orderType: string;
+  quantity: number;
+  status: string;
+  requestedAt: string;
+};
+
+export type OrderResult = {
+  order: OrderSummary;
+  trade: TradeSummary;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -146,6 +173,38 @@ export async function fetchMarketAlerts(limit = 50): Promise<MarketAlert[]> {
   return fetchWithRetry<MarketAlert[]>(requestUrl);
 }
 
+export async function placeMarketOrder(
+  currencyPair: string,
+  side: OrderSide,
+  quantity: number,
+): Promise<OrderResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders/market`;
+
+  return fetchWithRetry<OrderResult>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      currencyPair,
+      side,
+      quantity,
+    }),
+  });
+}
+
+export async function fetchTrades(
+  currencyPair?: string,
+  limit = 50,
+): Promise<TradeSummary[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+  if (currencyPair) {
+    params.set("currencyPair", currencyPair);
+  }
+  const requestUrl = `${getApiBaseUrl()}/api/trade/trades?${params.toString()}`;
+
+  return fetchWithRetry<TradeSummary[]>(requestUrl);
+}
+
 async function fetchWithRetry<T>(
   requestUrl: string,
   init?: RequestInit,
@@ -193,15 +252,13 @@ async function requestJson<T>(
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Rate history request failed (${response.status}) at ${requestUrl}`,
-      );
+      throw new Error(`Market API request failed (${response.status}) at ${requestUrl}`);
     }
 
     return response.json() as Promise<T>;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`Rate history request timed out at ${requestUrl}`);
+      throw new Error(`Market API request timed out at ${requestUrl}`);
     }
     throw error;
   } finally {

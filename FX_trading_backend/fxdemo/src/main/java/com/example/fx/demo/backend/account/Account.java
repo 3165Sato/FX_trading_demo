@@ -19,7 +19,7 @@ public class Account extends BaseEntity {
     private BigDecimal realizedPnl = BigDecimal.ZERO;
     private String status;
 
-    protected Account() {
+    public Account() {
     }
 
     public Long getCustomerId() {

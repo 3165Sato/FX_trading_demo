@@ -26,7 +26,7 @@ public class Customer extends BaseEntity {
     private String email;
     private String status;
 
-    protected Customer() {
+    public Customer() {
     }
 
     public String getCustomerNumber() {

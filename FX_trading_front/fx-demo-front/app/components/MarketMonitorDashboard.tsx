@@ -6,8 +6,10 @@ import {
   fetchLatestMarketRates,
   fetchMarketAlerts,
   fetchMarketRateTicks,
+  fetchTrades,
   fetchNewsEvents,
   getSpreadStats,
+  placeMarketOrder,
   triggerNewsEvent,
   type MarketRate,
   type MarketRateTick,
@@ -15,7 +17,9 @@ import {
   type MarketAlert,
   type NewsDirection,
   type NewsEvent,
+  type OrderSide,
   type SpreadStats,
+  type TradeSummary,
 } from "../../lib/marketRateTicks";
 import { MarketRateCard } from "./MarketRateCard";
 import { MarketRateChart } from "./MarketRateChart";
@@ -26,20 +30,27 @@ const TICK_LIMIT = 300;
 const SPREAD_STATS_LIMIT = 60;
 const NEWS_EVENT_LIMIT = 10;
 const ALERT_LIMIT = 50;
+const TRADE_LIMIT = 50;
 
 export function MarketMonitorDashboard() {
   const [rates, setRates] = useState<MarketRate[]>([]);
   const [ticks, setTicks] = useState<MarketRateTick[]>([]);
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
+  const [trades, setTrades] = useState<TradeSummary[]>([]);
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [selectedPair, setSelectedPair] = useState(DEFAULT_PAIR);
+  const [orderQuantity, setOrderQuantity] = useState("10000");
   const [rateChanges, setRateChanges] = useState<Record<string, number>>({});
   const [ratesLoading, setRatesLoading] = useState(true);
   const [ticksLoading, setTicksLoading] = useState(true);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [ticksError, setTicksError] = useState<string | null>(null);
   const [alertsError, setAlertsError] = useState<string | null>(null);
+  const [tradesError, setTradesError] = useState<string | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [lastOrderMessage, setLastOrderMessage] = useState<string | null>(null);
+  const [submittingOrderSide, setSubmittingOrderSide] = useState<OrderSide | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
   const [spreadStatsLoading, setSpreadStatsLoading] = useState(true);
@@ -123,6 +134,16 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadTrades = useCallback(async () => {
+    try {
+      const nextTrades = await fetchTrades(undefined, TRADE_LIMIT);
+      setTrades(nextTrades);
+      setTradesError(null);
+    } catch (error) {
+      setTradesError(getErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -151,6 +172,15 @@ export function MarketMonitorDashboard() {
   }, [loadAlerts]);
 
   useEffect(() => {
+    const initialTimeoutId = window.setTimeout(loadTrades, 0);
+    const intervalId = window.setInterval(loadTrades, 5000);
+    return () => {
+      window.clearTimeout(initialTimeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [loadTrades]);
+
+  useEffect(() => {
     const loadSelectedMarketData = () => {
       void loadTicks();
       void loadSpreadStats();
@@ -170,6 +200,8 @@ export function MarketMonitorDashboard() {
     setSelectedPair(currencyPair);
     setTicks([]);
     setSpreadStats(undefined);
+    setOrderError(null);
+    setLastOrderMessage(null);
     setTicksLoading(true);
     setSpreadStatsLoading(true);
     setTicksError(null);
@@ -182,8 +214,12 @@ export function MarketMonitorDashboard() {
   );
   const recentTicks = useMemo(() => ticks.slice(-10).reverse(), [ticks]);
   const activeAlerts = useMemo(() => alerts.filter((alert) => alert.active), [alerts]);
+  const selectedRate = useMemo(
+    () => rates.find((rate) => rate.currencyPair === activePair),
+    [activePair, rates],
+  );
   const connected = rates.length > 0 && ratesError === null;
-  const errorMessage = ratesError ?? ticksError ?? spreadStatsError ?? alertsError ?? newsEventsError;
+  const errorMessage = ratesError ?? ticksError ?? spreadStatsError ?? alertsError ?? tradesError ?? newsEventsError;
 
   const triggerSelectedNewsEvent = async (direction: NewsDirection) => {
     setNewsSubmittingDirection(direction);
@@ -209,7 +245,31 @@ export function MarketMonitorDashboard() {
     void loadTicks();
     void loadSpreadStats();
     void loadAlerts();
+    void loadTrades();
     void loadNewsEvents();
+  };
+
+  const submitMarketOrder = async (side: OrderSide) => {
+    const quantity = Number(orderQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setOrderError("Quantity must be greater than zero.");
+      return;
+    }
+
+    setSubmittingOrderSide(side);
+    try {
+      const result = await placeMarketOrder(activePair, side, quantity);
+      setOrderError(null);
+      setLastOrderMessage(
+        `${result.trade.side} ${result.trade.quantity} ${result.trade.currencyPair} filled at ${formatPrice(result.trade.price, result.trade.currencyPair)}`,
+      );
+      setTrades((current) => [result.trade, ...current].slice(0, TRADE_LIMIT));
+      void loadTrades();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setSubmittingOrderSide(null);
+    }
   };
 
   return (
@@ -330,6 +390,19 @@ export function MarketMonitorDashboard() {
           </section>
 
           <aside className="flex min-w-0 flex-col gap-6">
+            <MarketOrderPanel
+              activePair={activePair}
+              orderQuantity={orderQuantity}
+              rate={selectedRate}
+              submittingSide={submittingOrderSide}
+              error={orderError}
+              lastMessage={lastOrderMessage}
+              onQuantityChange={setOrderQuantity}
+              onSubmit={submitMarketOrder}
+            />
+
+            <TradeHistoryPanel trades={trades} />
+
             <AlertPanel alerts={alerts} activeCount={activeAlerts.length} />
 
             <NewsEventPanel
@@ -381,6 +454,141 @@ export function MarketMonitorDashboard() {
         </div>
       </div>
     </main>
+  );
+}
+
+function MarketOrderPanel({
+  activePair,
+  orderQuantity,
+  rate,
+  submittingSide,
+  error,
+  lastMessage,
+  onQuantityChange,
+  onSubmit,
+}: {
+  activePair: string;
+  orderQuantity: string;
+  rate?: MarketRate;
+  submittingSide: OrderSide | null;
+  error: string | null;
+  lastMessage: string | null;
+  onQuantityChange: (quantity: string) => void;
+  onSubmit: (side: OrderSide) => void;
+}) {
+  const priceScale = getPriceScale(activePair);
+  return (
+    <section className="border border-[#2a353e] bg-[#0e1419]">
+      <div className="border-b border-[#2a353e] px-4 py-3">
+        <h2 className="text-sm font-semibold text-zinc-100">Market order</h2>
+        <p className="mt-1 text-xs text-zinc-500">{activePair} instant fill demo</p>
+      </div>
+      <div className="grid grid-cols-2 gap-px bg-[#26313a]">
+        <ExecutionPrice label="SELL / Bid" value={rate?.bid} scale={priceScale} tone="sell" />
+        <ExecutionPrice label="BUY / Ask" value={rate?.ask} scale={priceScale} tone="buy" />
+      </div>
+      <div className="space-y-3 px-4 py-4">
+        <label className="block">
+          <span className="text-[10px] uppercase text-zinc-600">Quantity / units</span>
+          <input
+            value={orderQuantity}
+            onChange={(event) => onQuantityChange(event.target.value)}
+            inputMode="decimal"
+            className="mt-2 w-full border border-[#2a353e] bg-[#080c10] px-3 py-2 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <OrderButton side="SELL" loading={submittingSide === "SELL"} disabled={submittingSide !== null} onSubmit={onSubmit} />
+          <OrderButton side="BUY" loading={submittingSide === "BUY"} disabled={submittingSide !== null} onSubmit={onSubmit} />
+        </div>
+        {error && <div className="font-mono text-[11px] text-rose-300">{error}</div>}
+        {lastMessage && <div className="font-mono text-[11px] text-emerald-300">{lastMessage}</div>}
+      </div>
+    </section>
+  );
+}
+
+function ExecutionPrice({
+  label,
+  value,
+  scale,
+  tone,
+}: {
+  label: string;
+  value?: number;
+  scale: number;
+  tone: "buy" | "sell";
+}) {
+  return (
+    <div className="bg-[#0e1419] px-4 py-4">
+      <div className="text-[10px] uppercase text-zinc-600">{label}</div>
+      <div className={`mt-1 font-mono text-lg font-semibold ${tone === "buy" ? "text-rose-300" : "text-sky-300"}`}>
+        {value === undefined ? "--" : value.toFixed(scale)}
+      </div>
+    </div>
+  );
+}
+
+function OrderButton({
+  side,
+  loading,
+  disabled,
+  onSubmit,
+}: {
+  side: OrderSide;
+  loading: boolean;
+  disabled: boolean;
+  onSubmit: (side: OrderSide) => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onSubmit(side)}
+      className={`border px-3 py-3 font-mono text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+        side === "BUY"
+          ? "border-rose-400/50 text-rose-300 hover:bg-rose-400/10"
+          : "border-sky-400/50 text-sky-300 hover:bg-sky-400/10"
+      }`}
+    >
+      {loading ? "Sending..." : side}
+    </button>
+  );
+}
+
+function TradeHistoryPanel({ trades }: { trades: TradeSummary[] }) {
+  return (
+    <section className="border border-[#2a353e] bg-[#0e1419]">
+      <div className="border-b border-[#2a353e] px-4 py-3">
+        <h2 className="text-sm font-semibold text-zinc-100">Trade history</h2>
+        <p className="mt-1 text-xs text-zinc-500">Latest fills</p>
+      </div>
+      <div className="max-h-72 overflow-y-auto">
+        {trades.length === 0 ? (
+          <div className="px-4 py-10 text-center text-xs text-zinc-600">No trades yet</div>
+        ) : (
+          trades.slice(0, 12).map((trade) => <TradeRow key={trade.id} trade={trade} />)
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TradeRow({ trade }: { trade: TradeSummary }) {
+  return (
+    <div className="border-b border-[#202930] px-4 py-3 last:border-0">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-mono text-xs text-zinc-200">{trade.currencyPair}</span>
+        <span className={`font-mono text-[11px] ${trade.side === "BUY" ? "text-rose-300" : "text-sky-300"}`}>
+          {trade.side}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center justify-between font-mono text-[11px] text-zinc-500">
+        <span>{trade.quantity}</span>
+        <span>{formatPrice(trade.price, trade.currencyPair)}</span>
+      </div>
+      <div className="mt-1 font-mono text-[10px] text-zinc-600">{formatTime(trade.executedAt)}</div>
+    </div>
   );
 }
 
@@ -602,6 +810,10 @@ function TickRow({ tick }: { tick: MarketRateTick }) {
 
 function getPriceScale(currencyPair: string): number {
   return currencyPair.endsWith("/JPY") ? 3 : 5;
+}
+
+function formatPrice(value: number, currencyPair: string): string {
+  return value.toFixed(getPriceScale(currencyPair));
 }
 
 function LoadingPanel({ label }: { label: string }) {

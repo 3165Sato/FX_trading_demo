@@ -6,6 +6,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.Column;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -21,7 +22,10 @@ public class Trade extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private OrderSide side;
 
+    @Column(precision = 19, scale = 4)
     private BigDecimal quantity;
+
+    @Column(precision = 19, scale = 8)
     private BigDecimal executionPrice;
     private LocalDateTime executedAt;
 

@@ -8,6 +8,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.Column;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -27,15 +28,19 @@ public class FxOrder extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private OrderType orderType;
 
+    @Column(precision = 19, scale = 4)
     private BigDecimal quantity;
+
+    @Column(precision = 19, scale = 8)
     private BigDecimal orderPrice;
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
 
+    private LocalDateTime requestedAt;
     private LocalDateTime executedAt;
 
-    protected FxOrder() {
+    public FxOrder() {
     }
 
     public Long getAccountId() {
@@ -92,6 +97,14 @@ public class FxOrder extends BaseEntity {
 
     public void setStatus(OrderStatus status) {
         this.status = status;
+    }
+
+    public LocalDateTime getRequestedAt() {
+        return requestedAt;
+    }
+
+    public void setRequestedAt(LocalDateTime requestedAt) {
+        this.requestedAt = requestedAt;
     }
 
     public LocalDateTime getExecutedAt() {
