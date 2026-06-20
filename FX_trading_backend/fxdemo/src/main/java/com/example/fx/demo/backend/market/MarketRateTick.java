@@ -27,16 +27,16 @@ public class MarketRateTick {
     @JoinColumn(name = "currency_pair_id", nullable = false)
     private CurrencyPair currencyPair;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 19, scale = 8)
     private BigDecimal bid;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 19, scale = 8)
     private BigDecimal ask;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 19, scale = 8)
     private BigDecimal midPrice;
 
-    @Column(nullable = false)
+    @Column(nullable = false, precision = 19, scale = 8)
     private BigDecimal spread;
 
     @Column(nullable = false)

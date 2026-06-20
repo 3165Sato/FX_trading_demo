@@ -13,7 +13,7 @@ export function MarketRateCard({
   selected,
   onSelect,
 }: MarketRateCardProps) {
-  const priceScale = rate.currencyPair === "EUR/USD" ? 5 : 3;
+  const priceScale = getPriceScale(rate.currencyPair);
   const direction = change > 0 ? "up" : change < 0 ? "down" : "flat";
   const directionText =
     direction === "up" ? "UP" : direction === "down" ? "DOWN" : "FLAT";
@@ -61,6 +61,10 @@ export function MarketRateCard({
       </div>
     </button>
   );
+}
+
+function getPriceScale(currencyPair: string): number {
+  return currencyPair.endsWith("/JPY") ? 3 : 5;
 }
 
 function RateValue({

@@ -14,7 +14,6 @@ import { MarketRateCard } from "./MarketRateCard";
 import { MarketRateChart } from "./MarketRateChart";
 import { SpreadMonitorCard } from "./SpreadMonitorCard";
 
-const MONITORED_PAIRS = ["USD/JPY", "EUR/JPY", "EUR/USD"];
 const DEFAULT_PAIR = "USD/JPY";
 const TICK_LIMIT = 300;
 const SPREAD_STATS_LIMIT = 60;
@@ -33,6 +32,13 @@ export function MarketMonitorDashboard() {
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const previousRatesRef = useRef<Map<string, number>>(new Map());
+  const activePair = useMemo(
+    () =>
+      rates.some((rate) => rate.currencyPair === selectedPair)
+        ? selectedPair
+        : rates[0]?.currencyPair ?? selectedPair,
+    [rates, selectedPair],
+  );
 
   const loadRates = useCallback(async () => {
     try {
@@ -61,7 +67,7 @@ export function MarketMonitorDashboard() {
 
   const loadTicks = useCallback(async () => {
     try {
-      const nextTicks = await fetchMarketRateTicks(selectedPair, TICK_LIMIT);
+      const nextTicks = await fetchMarketRateTicks(activePair, TICK_LIMIT);
       setTicks(nextTicks);
       setTicksError(null);
     } catch (error) {
@@ -69,11 +75,11 @@ export function MarketMonitorDashboard() {
     } finally {
       setTicksLoading(false);
     }
-  }, [selectedPair]);
+  }, [activePair]);
 
   const loadSpreadStats = useCallback(async () => {
     try {
-      const nextStats = await getSpreadStats(selectedPair, SPREAD_STATS_LIMIT);
+      const nextStats = await getSpreadStats(activePair, SPREAD_STATS_LIMIT);
       setSpreadStats(nextStats);
       setSpreadStatsError(null);
     } catch (error) {
@@ -81,7 +87,7 @@ export function MarketMonitorDashboard() {
     } finally {
       setSpreadStatsLoading(false);
     }
-  }, [selectedPair]);
+  }, [activePair]);
 
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
@@ -106,7 +112,7 @@ export function MarketMonitorDashboard() {
   }, [loadSpreadStats, loadTicks]);
 
   const selectCurrencyPair = (currencyPair: string) => {
-    if (currencyPair === selectedPair) {
+    if (currencyPair === activePair) {
       return;
     }
     setSelectedPair(currencyPair);
@@ -119,10 +125,7 @@ export function MarketMonitorDashboard() {
   };
 
   const monitoredRates = useMemo(
-    () =>
-      MONITORED_PAIRS.map((pair) =>
-        rates.find((rate) => rate.currencyPair === pair),
-      ).filter((rate): rate is MarketRate => rate !== undefined),
+    () => [...rates].sort((first, second) => first.currencyPair.localeCompare(second.currencyPair)),
     [rates],
   );
   const recentTicks = useMemo(() => ticks.slice(-10).reverse(), [ticks]);
@@ -214,13 +217,13 @@ export function MarketMonitorDashboard() {
           {ratesLoading && rates.length === 0 ? (
             <LoadingPanel label="Loading latest market rates..." />
           ) : (
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {monitoredRates.map((rate) => (
                 <MarketRateCard
                   key={rate.currencyPair}
                   rate={rate}
                   change={rateChanges[rate.currencyPair] ?? 0}
-                  selected={selectedPair === rate.currencyPair}
+                  selected={activePair === rate.currencyPair}
                   onSelect={selectCurrencyPair}
                 />
               ))}
@@ -233,7 +236,7 @@ export function MarketMonitorDashboard() {
             <div className="flex items-center justify-between border-b border-[#2a353e] px-4 py-3 sm:px-5">
               <div>
                 <h2 className="font-mono text-sm font-semibold text-zinc-100">
-                  {selectedPair} Bid / Ask / Mid
+                  {activePair} Bid / Ask / Mid
                 </h2>
                 <p className="mt-1 text-xs text-zinc-500">
                   Recent simulated tick history
@@ -245,19 +248,19 @@ export function MarketMonitorDashboard() {
             </div>
 
             {ticksLoading && ticks.length === 0 ? (
-              <LoadingPanel label={`Loading ${selectedPair} tick history...`} />
+              <LoadingPanel label={`Loading ${activePair} tick history...`} />
             ) : ticks.length === 0 ? (
               <EmptyPanel label="No tick history is available yet." />
             ) : (
               <div className="p-2 sm:p-4">
-                <MarketRateChart currencyPair={selectedPair} ticks={ticks} />
+                <MarketRateChart currencyPair={activePair} ticks={ticks} />
               </div>
             )}
           </section>
 
           <aside className="flex min-w-0 flex-col gap-6">
             <SpreadMonitorCard
-              currencyPair={selectedPair}
+              currencyPair={activePair}
               error={spreadStatsError}
               loading={spreadStatsLoading}
               stats={spreadStats}
@@ -267,7 +270,7 @@ export function MarketMonitorDashboard() {
               <div className="border-b border-[#2a353e] px-4 py-3">
                 <h2 className="text-sm font-semibold text-zinc-100">Tick log</h2>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Latest 10 / {selectedPair}
+                  Latest 10 / {activePair}
                 </p>
               </div>
               <div className="overflow-x-auto">
@@ -328,7 +331,7 @@ function StatusItem({
 }
 
 function TickRow({ tick }: { tick: MarketRateTick }) {
-  const scale = tick.currencyPair === "EUR/USD" ? 5 : 3;
+  const scale = getPriceScale(tick.currencyPair);
   return (
     <tr className="border-b border-[#202930] text-zinc-300 last:border-0 hover:bg-white/[0.025]">
       <td className="px-3 py-3 text-zinc-500">{formatTime(tick.quotedAt)}</td>
@@ -342,6 +345,10 @@ function TickRow({ tick }: { tick: MarketRateTick }) {
       </td>
     </tr>
   );
+}
+
+function getPriceScale(currencyPair: string): number {
+  return currencyPair.endsWith("/JPY") ? 3 : 5;
 }
 
 function LoadingPanel({ label }: { label: string }) {

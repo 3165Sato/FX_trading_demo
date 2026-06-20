@@ -27,28 +27,34 @@ public class MarketDataInitializer implements CommandLineRunner {
         CurrencyPair usdJpy = findOrCreateCurrencyPair("USD/JPY", "USD", "JPY", 3, 0, 2);
         CurrencyPair eurJpy = findOrCreateCurrencyPair("EUR/JPY", "EUR", "JPY", 3, 0, 2);
         CurrencyPair eurUsd = findOrCreateCurrencyPair("EUR/USD", "EUR", "USD", 5, 0, 4);
+        CurrencyPair gbpUsd = findOrCreateCurrencyPair("GBP/USD", "GBP", "USD", 5, 0, 4);
+        CurrencyPair gbpJpy = findOrCreateCurrencyPair("GBP/JPY", "GBP", "JPY", 3, 0, 2);
+        CurrencyPair audUsd = findOrCreateCurrencyPair("AUD/USD", "AUD", "USD", 5, 0, 4);
+        CurrencyPair audJpy = findOrCreateCurrencyPair("AUD/JPY", "AUD", "JPY", 3, 0, 2);
+        CurrencyPair usdChf = findOrCreateCurrencyPair("USD/CHF", "USD", "CHF", 5, 0, 4);
+        CurrencyPair usdCad = findOrCreateCurrencyPair("USD/CAD", "USD", "CAD", 5, 0, 4);
 
         createMarketRateIfAbsent(
                 usdJpy,
-                new BigDecimal("155.120"),
-                new BigDecimal("155.123"),
                 new BigDecimal("155.1215"),
                 new BigDecimal("0.003")
         );
         createMarketRateIfAbsent(
                 eurJpy,
-                new BigDecimal("168.250"),
-                new BigDecimal("168.255"),
                 new BigDecimal("168.2525"),
                 new BigDecimal("0.005")
         );
         createMarketRateIfAbsent(
                 eurUsd,
-                new BigDecimal("1.08500"),
-                new BigDecimal("1.08503"),
                 new BigDecimal("1.085015"),
                 new BigDecimal("0.00003")
         );
+        createMarketRateIfAbsent(gbpUsd, new BigDecimal("1.27000"), new BigDecimal("0.00004"));
+        createMarketRateIfAbsent(gbpJpy, new BigDecimal("197.000"), new BigDecimal("0.008"));
+        createMarketRateIfAbsent(audUsd, new BigDecimal("0.65000"), new BigDecimal("0.00004"));
+        createMarketRateIfAbsent(audJpy, new BigDecimal("100.830"), new BigDecimal("0.007"));
+        createMarketRateIfAbsent(usdChf, new BigDecimal("0.88000"), new BigDecimal("0.00004"));
+        createMarketRateIfAbsent(usdCad, new BigDecimal("1.37000"), new BigDecimal("0.00005"));
     }
 
     private CurrencyPair findOrCreateCurrencyPair(
@@ -75,8 +81,6 @@ public class MarketDataInitializer implements CommandLineRunner {
 
     private void createMarketRateIfAbsent(
             CurrencyPair currencyPair,
-            BigDecimal bid,
-            BigDecimal ask,
             BigDecimal midPrice,
             BigDecimal spread
     ) {
@@ -86,9 +90,11 @@ public class MarketDataInitializer implements CommandLineRunner {
         }
 
         MarketRate marketRate = new MarketRate();
+        int priceScale = currencyPair.getPriceScale();
+        BigDecimal halfSpread = spread.divide(new BigDecimal("2"), priceScale + 4, java.math.RoundingMode.HALF_UP);
         marketRate.setCurrencyPair(currencyPair);
-        marketRate.setBid(bid);
-        marketRate.setAsk(ask);
+        marketRate.setBid(midPrice.subtract(halfSpread).setScale(priceScale, java.math.RoundingMode.HALF_UP));
+        marketRate.setAsk(midPrice.add(halfSpread).setScale(priceScale, java.math.RoundingMode.HALF_UP));
         marketRate.setMidPrice(midPrice);
         marketRate.setSpread(spread);
         marketRate.setQuotedAt(Instant.now());

@@ -45,7 +45,7 @@ export function MarketRateChart({
       })),
     [ticks],
   );
-  const priceScale = currencyPair === "EUR/USD" ? 5 : 3;
+  const priceScale = getPriceScale(currencyPair);
 
   return (
     <div className="h-[390px] w-full sm:h-[470px]">
@@ -110,6 +110,10 @@ export function MarketRateChart({
       </ResponsiveContainer>
     </div>
   );
+}
+
+function getPriceScale(currencyPair: string): number {
+  return currencyPair.endsWith("/JPY") ? 3 : 5;
 }
 
 function RateTooltip({

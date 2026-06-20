@@ -1,0 +1,25 @@
+demofx:
+  simulator:
+    default:
+      volatilityBps: 1.5
+      reversionStrength: 0.01
+      maxDeviationBps: 300
+    pairs:
+      - symbol: "USD/JPY"
+        basePrice: 155.1215
+      - symbol: "EUR/JPY"
+        basePrice: 168.2525
+      - symbol: "EUR/USD"
+        basePrice: 1.085015
+      - symbol: "GBP/USD"
+        basePrice: 1.27000
+      - symbol: "GBP/JPY"
+        basePrice: 197.000
+      - symbol: "AUD/USD"
+        basePrice: 0.65000
+      - symbol: "AUD/JPY"
+        basePrice: 100.830
+      - symbol: "USD/CHF"
+        basePrice: 0.88000
+      - symbol: "USD/CAD"
+        basePrice: 1.37000

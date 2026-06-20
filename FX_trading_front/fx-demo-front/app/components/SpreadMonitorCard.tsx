@@ -13,7 +13,7 @@ export function SpreadMonitorCard({
   loading,
   stats,
 }: SpreadMonitorCardProps) {
-  const scale = currencyPair === "EUR/USD" ? 5 : 3;
+  const scale = getPriceScale(currencyPair);
   const status = stats?.status ?? "INSUFFICIENT_DATA";
 
   return (
@@ -61,6 +61,10 @@ export function SpreadMonitorCard({
       </div>
     </section>
   );
+}
+
+function getPriceScale(currencyPair: string): number {
+  return currencyPair.endsWith("/JPY") ? 3 : 5;
 }
 
 function SpreadValue({
