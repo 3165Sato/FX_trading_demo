@@ -88,6 +88,14 @@ export type OrderResult = {
   trade: TradeSummary;
 };
 
+export type PositionSummary = {
+  currencyPair: string;
+  side: "LONG" | "SHORT";
+  quantity: number;
+  averagePrice: number;
+  updatedAt: string;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -218,6 +226,19 @@ export async function fetchOrders(
   const requestUrl = `${getApiBaseUrl()}/api/trade/orders?${params.toString()}`;
 
   return fetchWithRetry<OrderSummary[]>(requestUrl);
+}
+
+export async function fetchPositions(
+  currencyPair?: string,
+): Promise<PositionSummary[]> {
+  const params = new URLSearchParams();
+  if (currencyPair) {
+    params.set("currencyPair", currencyPair);
+  }
+  const query = params.toString();
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions${query ? `?${query}` : ""}`;
+
+  return fetchWithRetry<PositionSummary[]>(requestUrl);
 }
 
 async function fetchWithRetry<T>(

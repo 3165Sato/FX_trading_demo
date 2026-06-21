@@ -7,6 +7,7 @@ import {
   fetchMarketAlerts,
   fetchMarketRateTicks,
   fetchOrders,
+  fetchPositions,
   fetchTrades,
   fetchNewsEvents,
   getSpreadStats,
@@ -20,6 +21,7 @@ import {
   type NewsEvent,
   type OrderSide,
   type OrderSummary,
+  type PositionSummary,
   type SpreadStats,
   type TradeSummary,
 } from "../../lib/marketRateTicks";
@@ -47,6 +49,7 @@ export function MarketMonitorDashboard() {
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
   const [trades, setTrades] = useState<TradeSummary[]>([]);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [positions, setPositions] = useState<PositionSummary[]>([]);
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
@@ -61,6 +64,7 @@ export function MarketMonitorDashboard() {
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [positionsError, setPositionsError] = useState<string | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
@@ -237,6 +241,16 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadPositions = useCallback(async () => {
+    try {
+      const nextPositions = await fetchPositions();
+      setPositions(nextPositions);
+      setPositionsError(null);
+    } catch (error) {
+      setPositionsError(getErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -268,6 +282,7 @@ export function MarketMonitorDashboard() {
     const loadTradeData = () => {
       void loadTrades();
       void loadOrders();
+      void loadPositions();
     };
     const initialTimeoutId = window.setTimeout(loadTradeData, 0);
     const intervalId = window.setInterval(loadTradeData, 5000);
@@ -275,7 +290,7 @@ export function MarketMonitorDashboard() {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadOrders, loadTrades]);
+  }, [loadOrders, loadPositions, loadTrades]);
 
   useEffect(() => {
     const loadSelectedMarketData = () => {
@@ -332,6 +347,7 @@ export function MarketMonitorDashboard() {
     alertsError ??
     tradesError ??
     ordersError ??
+    positionsError ??
     newsEventsError;
 
   const setActiveScreen = (nextScreen: Screen) => {
@@ -364,6 +380,7 @@ export function MarketMonitorDashboard() {
     void loadAlerts();
     void loadTrades();
     void loadOrders();
+    void loadPositions();
     void loadNewsEvents();
   };
 
@@ -385,6 +402,7 @@ export function MarketMonitorDashboard() {
       setOrders((current) => [result.order, ...current].slice(0, ORDER_LIMIT));
       void loadTrades();
       void loadOrders();
+      void loadPositions();
     } catch (error) {
       setOrderError(getErrorMessage(error));
     } finally {
@@ -437,6 +455,7 @@ export function MarketMonitorDashboard() {
             orderError={orderError}
             orderQuantity={orderQuantity}
             orders={orders}
+            positions={positions}
             rates={monitoredRates}
             selectedRate={selectedRate}
             submittingOrderSide={submittingOrderSide}
@@ -649,6 +668,7 @@ function TradingScreen({
   orderError,
   orderQuantity,
   orders,
+  positions,
   rates,
   selectedRate,
   submittingOrderSide,
@@ -662,6 +682,7 @@ function TradingScreen({
   orderError: string | null;
   orderQuantity: string;
   orders: OrderSummary[];
+  positions: PositionSummary[];
   rates: MarketRate[];
   selectedRate?: MarketRate;
   submittingOrderSide: OrderSide | null;
@@ -699,7 +720,7 @@ function TradingScreen({
         <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
           <ExecutionHistoryPanel trades={trades} onSelectPair={onSelectPair} />
           <OrderHistoryPanel orders={orders} />
-          <PositionsPlaceholder />
+          <PositionsTable positions={positions} />
           <RiskPlaceholder />
         </div>
       </div>
@@ -1251,19 +1272,42 @@ function OrderRow({ order }: { order: OrderSummary }) {
   );
 }
 
-function PositionsPlaceholder() {
+function PositionsTable({ positions }: { positions: PositionSummary[] }) {
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
-      <PanelHeader title="Positions" meta="Coming soon" />
-      <div className="grid grid-cols-5 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <PanelHeader title="Positions" meta={`${positions.length} open`} />
+      <div className="grid grid-cols-6 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>Pair</span>
         <span>Side</span>
         <span className="text-right">Units</span>
-        <span className="text-right">Avg</span>
+        <span className="text-right">Avg Price</span>
+        <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
       </div>
-      <div className="px-4 py-12 text-center text-sm text-[#768390]">Coming soon</div>
+      <div className="max-h-[260px] overflow-y-auto">
+        {positions.length === 0 ? (
+          <div className="px-4 py-12 text-center text-sm text-[#768390]">No open positions</div>
+        ) : (
+          positions.map((position) => <PositionRow key={position.currencyPair} position={position} />)
+        )}
+      </div>
     </section>
+  );
+}
+
+function PositionRow({ position }: { position: PositionSummary }) {
+  const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
+  return (
+    <div className="grid grid-cols-6 gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+      <span className="text-[#e6edf3]">{position.currencyPair}</span>
+      <span className={sideClass}>{position.side}</span>
+      <span className="text-right text-[#adbac7]">{formatQuantity(position.quantity)}</span>
+      <span className="text-right text-[#adbac7]">
+        {formatPrice(position.averagePrice, position.currencyPair)}
+      </span>
+      <span className="text-right text-[#768390]">--</span>
+      <span className="text-right text-[#768390]">--</span>
+    </div>
   );
 }
 
