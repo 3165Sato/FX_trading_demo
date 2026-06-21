@@ -205,6 +205,21 @@ export async function fetchTrades(
   return fetchWithRetry<TradeSummary[]>(requestUrl);
 }
 
+export async function fetchOrders(
+  currencyPair?: string,
+  limit = 50,
+): Promise<OrderSummary[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+  if (currencyPair) {
+    params.set("currencyPair", currencyPair);
+  }
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders?${params.toString()}`;
+
+  return fetchWithRetry<OrderSummary[]>(requestUrl);
+}
+
 async function fetchWithRetry<T>(
   requestUrl: string,
   init?: RequestInit,

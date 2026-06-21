@@ -48,7 +48,7 @@ export function MarketRateChart({
   const priceScale = getPriceScale(currencyPair);
 
   return (
-    <div className="h-[390px] w-full sm:h-[470px]">
+    <div className="h-[390px] w-full xl:h-full xl:min-h-[300px]">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={chartData}
