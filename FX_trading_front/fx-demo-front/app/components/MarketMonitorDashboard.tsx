@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  fetchAccountSummary,
   fetchLatestMarketRates,
   fetchMarketAlerts,
   fetchMarketRateTicks,
@@ -14,6 +15,7 @@ import {
   getSpreadStats,
   placeMarketOrder,
   triggerNewsEvent,
+  type AccountSummary,
   type AlertSeverity,
   type MarketAlert,
   type MarketRate,
@@ -53,6 +55,7 @@ export function MarketMonitorDashboard() {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [positions, setPositions] = useState<PositionSummary[]>([]);
   const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
+  const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
@@ -69,6 +72,7 @@ export function MarketMonitorDashboard() {
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [positionsError, setPositionsError] = useState<string | null>(null);
   const [pnlSummaryError, setPnlSummaryError] = useState<string | null>(null);
+  const [accountSummaryError, setAccountSummaryError] = useState<string | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
@@ -265,6 +269,16 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadAccountSummary = useCallback(async () => {
+    try {
+      const nextSummary = await fetchAccountSummary();
+      setAccountSummary(nextSummary);
+      setAccountSummaryError(null);
+    } catch (error) {
+      setAccountSummaryError(getErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -298,6 +312,7 @@ export function MarketMonitorDashboard() {
       void loadOrders();
       void loadPositions();
       void loadPnlSummary();
+      void loadAccountSummary();
     };
     const initialTimeoutId = window.setTimeout(loadTradeData, 0);
     const intervalId = window.setInterval(loadTradeData, 5000);
@@ -305,7 +320,7 @@ export function MarketMonitorDashboard() {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadOrders, loadPnlSummary, loadPositions, loadTrades]);
+  }, [loadAccountSummary, loadOrders, loadPnlSummary, loadPositions, loadTrades]);
 
   useEffect(() => {
     const loadSelectedMarketData = () => {
@@ -364,6 +379,7 @@ export function MarketMonitorDashboard() {
     ordersError ??
     positionsError ??
     pnlSummaryError ??
+    accountSummaryError ??
     newsEventsError;
 
   const setActiveScreen = (nextScreen: Screen) => {
@@ -398,6 +414,7 @@ export function MarketMonitorDashboard() {
     void loadOrders();
     void loadPositions();
     void loadPnlSummary();
+    void loadAccountSummary();
     void loadNewsEvents();
   };
 
@@ -421,6 +438,7 @@ export function MarketMonitorDashboard() {
       void loadOrders();
       void loadPositions();
       void loadPnlSummary();
+      void loadAccountSummary();
     } catch (error) {
       setOrderError(getErrorMessage(error));
     } finally {
@@ -469,6 +487,7 @@ export function MarketMonitorDashboard() {
           />
         ) : (
           <TradingScreen
+            accountSummary={accountSummary}
             activePair={tradingActivePair}
             orderError={orderError}
             orderQuantity={orderQuantity}
@@ -683,6 +702,7 @@ function MonitorScreen({
 }
 
 function TradingScreen({
+  accountSummary,
   activePair,
   orderError,
   orderQuantity,
@@ -698,6 +718,7 @@ function TradingScreen({
   onSelectPair,
   onSubmitOrder,
 }: {
+  accountSummary: AccountSummary | null;
   activePair: string;
   orderError: string | null;
   orderQuantity: string;
@@ -716,7 +737,7 @@ function TradingScreen({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex flex-col gap-4">
-      <AccountSummaryBand />
+      <AccountSummaryBand summary={accountSummary} />
 
       <div className="grid gap-4 xl:grid-cols-[430px_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
@@ -742,7 +763,7 @@ function TradingScreen({
           <ExecutionHistoryPanel trades={trades} onSelectPair={onSelectPair} />
           <OrderHistoryPanel orders={orders} />
           <PositionsTable positions={positions} />
-          <PnlSummaryPanel summary={pnlSummary} />
+          <PnlSummaryPanel accountSummary={accountSummary} summary={pnlSummary} />
         </div>
       </div>
       </div>
@@ -1191,30 +1212,40 @@ function NewsEventRow({ event }: { event: NewsEvent }) {
   );
 }
 
-function AccountSummaryBand() {
+function AccountSummaryBand({ summary }: { summary: AccountSummary | null }) {
   return (
-    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-4">
-      <AccountMetric label="Account" value="DEMO-0001" />
-      <AccountMetric label="Equity" value="Coming soon" muted />
-      <AccountMetric label="Margin level" value="Coming soon" muted />
-      <AccountMetric label="Free margin" value="Coming soon" muted />
+    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-5">
+      <AccountMetric label="Account" value={summary?.accountId ?? "DEMO-ACCOUNT-001"} />
+      <AccountMetric label="Balance" value={formatOptionalJpy(summary?.balance)} />
+      <AccountMetric
+        label="Equity"
+        tone={pnlTone(summary?.unrealizedPnl ?? null)}
+        value={formatOptionalJpy(summary?.equity)}
+      />
+      <AccountMetric
+        label="Margin level"
+        tone={marginStatusTone(summary?.status)}
+        value={formatOptionalPercent(summary?.marginRatio)}
+      />
+      <AccountMetric label="Free margin" value={formatOptionalJpy(summary?.freeMargin)} />
     </section>
   );
 }
 
 function AccountMetric({
   label,
-  muted,
+  tone,
   value,
 }: {
   label: string;
-  muted?: boolean;
+  tone?: "muted" | "positive" | "negative" | "warning";
   value: string;
 }) {
+  const valueClass = metricToneClass(tone);
   return (
     <div className="bg-[#161b22] px-4 py-3">
       <div className="text-[10px] uppercase text-[#768390]">{label}</div>
-      <div className={`mt-1 font-mono text-sm font-semibold ${muted ? "text-[#768390]" : "text-[#e6edf3]"}`}>
+      <div className={`mt-1 font-mono text-sm font-semibold ${valueClass}`}>
         {value}
       </div>
     </div>
@@ -1297,13 +1328,14 @@ function PositionsTable({ positions }: { positions: PositionSummary[] }) {
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Positions" meta={`${positions.length} open`} />
-      <div className="grid grid-cols-6 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-7 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>Pair</span>
         <span>Side</span>
         <span className="text-right">Units</span>
         <span className="text-right">Avg Price</span>
         <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
+        <span className="text-right">Margin</span>
       </div>
       <div className="max-h-[260px] overflow-y-auto">
         {positions.length === 0 ? (
@@ -1320,7 +1352,7 @@ function PositionRow({ position }: { position: PositionSummary }) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
   const pnlClass = pnlToneClass(position.unrealizedPnl);
   return (
-    <div className="grid grid-cols-6 gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+    <div className="grid grid-cols-7 gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
       <span className="text-[#e6edf3]">{position.currencyPair}</span>
       <span className={sideClass}>{position.side}</span>
       <span className="text-right text-[#adbac7]">{formatQuantity(position.quantity)}</span>
@@ -1335,27 +1367,70 @@ function PositionRow({ position }: { position: PositionSummary }) {
           ? "--"
           : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
       </span>
+      <span className="text-right text-[#adbac7]">{formatOptionalJpy(position.requiredMargin)}</span>
     </div>
   );
 }
 
-function PnlSummaryPanel({ summary }: { summary: PnlSummary | null }) {
+function PnlSummaryPanel({
+  accountSummary,
+  summary,
+}: {
+  accountSummary: AccountSummary | null;
+  summary: PnlSummary | null;
+}) {
   const unrealizedRows = formatCurrencyMap(summary?.unrealizedByCurrency);
   const realizedRows = formatCurrencyMap(summary?.realizedByCurrency);
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
-      <PanelHeader title="P&L / Margin" meta="quote currency" />
+      <PanelHeader title="P&L / Margin" meta={accountSummary?.status ?? "SAFE"} />
       <div className="grid gap-px bg-[#262d38] md:grid-cols-3">
         <PnlMetric label="Unrealized P&L" rows={unrealizedRows} />
         <PnlMetric label="Realized P&L" rows={realizedRows} />
-        <AccountMetric label="Loss cut" value="50%" />
+        <AccountMetric label="Used margin" value={formatOptionalJpy(accountSummary?.usedMargin)} />
       </div>
-      <div className="px-4 py-6">
-        <div className="h-2 bg-[#0d1117]">
-          <div className="h-full w-1/3 bg-[#58a6ff]" />
+      <MarginGauge summary={accountSummary} />
+    </section>
+  );
+}
+
+function MarginGauge({ summary }: { summary: AccountSummary | null }) {
+  const ratio = summary?.marginRatio ?? null;
+  const lossCut = summary?.lossCutThreshold ?? 50;
+  const gaugeMax = 200;
+  const ratioWidth = ratio === null ? 0 : Math.min(100, Math.max(0, (ratio / gaugeMax) * 100));
+  const lossCutLeft = Math.min(100, Math.max(0, (lossCut / gaugeMax) * 100));
+  const gaugeClass = marginStatusBarClass(summary?.status);
+
+  return (
+    <div className="px-4 py-5">
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <div>
+          <div className="text-[10px] uppercase text-[#768390]">Margin ratio</div>
+          <div className={`mt-1 font-mono text-lg font-semibold ${metricToneClass(marginStatusTone(summary?.status))}`}>
+            {formatOptionalPercent(ratio)}
+          </div>
+        </div>
+        <div className="text-right font-mono text-[11px] text-[#768390]">
+          <div>Loss cut {formatOptionalPercent(lossCut)}</div>
+          <div>Free {formatOptionalJpy(summary?.freeMargin)}</div>
         </div>
       </div>
-    </section>
+      <div className="relative h-3 overflow-hidden bg-[#0d1117]">
+        <div className={`h-full ${gaugeClass}`} style={{ width: `${ratioWidth}%` }} />
+        <div
+          className="absolute top-0 h-full w-px bg-[#f85149]"
+          style={{ left: `${lossCutLeft}%` }}
+          aria-hidden="true"
+        />
+      </div>
+      <div className="mt-2 flex justify-between font-mono text-[10px] text-[#768390]">
+        <span>0%</span>
+        <span>50%</span>
+        <span>100%</span>
+        <span>200%+</span>
+      </div>
+    </div>
   );
 }
 
@@ -1516,6 +1591,20 @@ function formatCurrencyAmount(currency: string, value: number): string {
   return `${currency} ${sign}${formatted}`;
 }
 
+function formatOptionalJpy(value?: number | null): string {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  return `JPY ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)}`;
+}
+
+function formatOptionalPercent(value?: number | null): string {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  return `${value.toFixed(2)}%`;
+}
+
 function formatCurrencyMap(
   values?: Record<string, number>,
 ): Array<{ currency: string; value: number }> {
@@ -1536,6 +1625,54 @@ function pnlToneClass(value: number | null): string {
     return "text-[#768390]";
   }
   return value > 0 ? "text-[#3fb950]" : "text-[#f85149]";
+}
+
+function pnlTone(value: number | null): "muted" | "positive" | "negative" {
+  if (value === null || value === 0) {
+    return "muted";
+  }
+  return value > 0 ? "positive" : "negative";
+}
+
+function marginStatusTone(status?: AccountSummary["status"]): "muted" | "positive" | "negative" | "warning" {
+  switch (status) {
+    case "DANGER":
+      return "negative";
+    case "WARNING":
+      return "warning";
+    case "SAFE":
+      return "positive";
+    default:
+      return "muted";
+  }
+}
+
+function metricToneClass(tone?: "muted" | "positive" | "negative" | "warning"): string {
+  switch (tone) {
+    case "positive":
+      return "text-[#3fb950]";
+    case "negative":
+      return "text-[#f85149]";
+    case "warning":
+      return "text-[#d29922]";
+    case "muted":
+      return "text-[#768390]";
+    default:
+      return "text-[#e6edf3]";
+  }
+}
+
+function marginStatusBarClass(status?: AccountSummary["status"]): string {
+  switch (status) {
+    case "DANGER":
+      return "bg-[#f85149]";
+    case "WARNING":
+      return "bg-[#d29922]";
+    case "SAFE":
+      return "bg-[#3fb950]";
+    default:
+      return "bg-[#58a6ff]";
+  }
 }
 
 function formatSignedChange(value: number, scale: number): string {

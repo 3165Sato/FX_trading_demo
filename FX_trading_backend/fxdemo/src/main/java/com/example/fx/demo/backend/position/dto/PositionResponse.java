@@ -11,6 +11,7 @@ public record PositionResponse(
         String quoteCurrency,
         BigDecimal currentPrice,
         BigDecimal unrealizedPnl,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        BigDecimal requiredMargin
 ) {
 }

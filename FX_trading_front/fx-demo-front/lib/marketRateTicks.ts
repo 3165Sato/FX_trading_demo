@@ -97,11 +97,28 @@ export type PositionSummary = {
   currentPrice: number | null;
   unrealizedPnl: number | null;
   updatedAt: string;
+  requiredMargin: number | null;
 };
 
 export type PnlSummary = {
   unrealizedByCurrency: Record<string, number>;
   realizedByCurrency: Record<string, number>;
+};
+
+export type AccountMarginStatus = "SAFE" | "WARNING" | "DANGER";
+
+export type AccountSummary = {
+  accountId: string;
+  baseCurrency: string;
+  balance: number | null;
+  realizedPnl: number | null;
+  unrealizedPnl: number | null;
+  equity: number | null;
+  usedMargin: number | null;
+  freeMargin: number | null;
+  marginRatio: number | null;
+  lossCutThreshold: number;
+  status: AccountMarginStatus;
 };
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -253,6 +270,12 @@ export async function fetchPnlSummary(): Promise<PnlSummary> {
   const requestUrl = `${getApiBaseUrl()}/api/trade/pnl/summary`;
 
   return fetchWithRetry<PnlSummary>(requestUrl);
+}
+
+export async function fetchAccountSummary(): Promise<AccountSummary> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/account/summary`;
+
+  return fetchWithRetry<AccountSummary>(requestUrl);
 }
 
 async function fetchWithRetry<T>(

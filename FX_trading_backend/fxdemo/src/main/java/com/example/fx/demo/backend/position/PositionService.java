@@ -6,6 +6,9 @@ import com.example.fx.demo.backend.market.CurrencyPair;
 import com.example.fx.demo.backend.market.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.MarketRate;
 import com.example.fx.demo.backend.market.MarketRateRepository;
+import com.example.fx.demo.backend.margin.CurrencyConverter;
+import com.example.fx.demo.backend.margin.MarginRule;
+import com.example.fx.demo.backend.margin.MarginRuleRepository;
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
 import com.example.fx.demo.backend.trade.DemoTradingAccountInitializer;
@@ -26,22 +29,32 @@ import java.util.stream.Collectors;
 @Service
 public class PositionService {
 
+    private static final BigDecimal DEFAULT_LEVERAGE = new BigDecimal("25");
+    private static final int MARGIN_SCALE = 8;
+
     private final AccountRepository accountRepository;
     private final CurrencyPairRepository currencyPairRepository;
     private final MarketRateRepository marketRateRepository;
+    private final MarginRuleRepository marginRuleRepository;
     private final TradeRepository tradeRepository;
+    private final CurrencyConverter currencyConverter;
     private final PositionNettingCalculator calculator = new PositionNettingCalculator();
+    private final PositionValuationCalculator valuationCalculator = new PositionValuationCalculator();
 
     public PositionService(
             AccountRepository accountRepository,
             CurrencyPairRepository currencyPairRepository,
             MarketRateRepository marketRateRepository,
-            TradeRepository tradeRepository
+            MarginRuleRepository marginRuleRepository,
+            TradeRepository tradeRepository,
+            CurrencyConverter currencyConverter
     ) {
         this.accountRepository = accountRepository;
         this.currencyPairRepository = currencyPairRepository;
         this.marketRateRepository = marketRateRepository;
+        this.marginRuleRepository = marginRuleRepository;
         this.tradeRepository = tradeRepository;
+        this.currencyConverter = currencyConverter;
     }
 
     @Transactional(readOnly = true)
@@ -49,9 +62,17 @@ public class PositionService {
         PositionCalculationResult result = calculatePositions(currencyPair);
         Map<String, MarketRate> rates = loadRates();
         Map<String, CurrencyPairScale> scales = loadScales();
+        Map<String, MarginRule> marginRules = loadMarginRules();
+        Map<String, BigDecimal> midRates = toMidRateMap(rates);
 
         return result.openPositions().stream()
-                .map(position -> toResponse(position, rates.get(position.currencyPair()), scales.get(position.currencyPair())))
+                .map(position -> toResponse(
+                        position,
+                        rates.get(position.currencyPair()),
+                        scales.get(position.currencyPair()),
+                        marginRules.get(position.currencyPair()),
+                        midRates
+                ))
                 .toList();
     }
 
@@ -86,20 +107,39 @@ public class PositionService {
     private PositionResponse toResponse(
             PositionSnapshot position,
             MarketRate marketRate,
-            CurrencyPairScale scale
+            CurrencyPairScale scale,
+            MarginRule marginRule,
+            Map<String, BigDecimal> midRates
     ) {
-        BigDecimal currentPrice = currentPrice(position, marketRate);
-        BigDecimal unrealizedPnl = calculateUnrealizedPnl(position, marketRate, scale);
-        return new PositionResponse(
-                position.currencyPair(),
-                position.side(),
-                position.quantity(),
-                position.averagePrice(),
-                position.quoteCurrency(),
-                currentPrice,
-                unrealizedPnl,
-                position.updatedAt()
+        BigDecimal requiredMargin = calculateRequiredMargin(position, marketRate, marginRule, midRates);
+        return valuationCalculator.toResponse(
+                position,
+                marketRate == null ? null : marketRate.getBid(),
+                marketRate == null ? null : marketRate.getAsk(),
+                scale,
+                requiredMargin
         );
+    }
+
+    private BigDecimal calculateRequiredMargin(
+            PositionSnapshot position,
+            MarketRate marketRate,
+            MarginRule marginRule,
+            Map<String, BigDecimal> midRates
+    ) {
+        if (marketRate == null || marketRate.getMidPrice() == null) {
+            return null;
+        }
+        BigDecimal leverage = marginRule != null && marginRule.getLeverage() != null
+                ? marginRule.getLeverage()
+                : DEFAULT_LEVERAGE;
+        if (leverage.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+
+        BigDecimal notionalQuote = position.quantity().multiply(marketRate.getMidPrice());
+        BigDecimal requiredMarginQuote = notionalQuote.divide(leverage, MARGIN_SCALE, RoundingMode.HALF_UP);
+        return currencyConverter.toJpy(requiredMarginQuote, position.quoteCurrency(), midRates);
     }
 
     private BigDecimal calculateUnrealizedPnl(
@@ -107,21 +147,11 @@ public class PositionService {
             MarketRate marketRate,
             CurrencyPairScale scale
     ) {
-        BigDecimal currentPrice = currentPrice(position, marketRate);
-        if (currentPrice == null || scale == null) {
-            return null;
-        }
-        BigDecimal pnl = "LONG".equals(position.side())
-                ? currentPrice.subtract(position.averagePrice()).multiply(position.quantity())
-                : position.averagePrice().subtract(currentPrice).multiply(position.quantity());
-        return pnl.setScale(scale.pnlScale(), RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal currentPrice(PositionSnapshot position, MarketRate marketRate) {
-        if (marketRate == null) {
-            return null;
-        }
-        return "LONG".equals(position.side()) ? marketRate.getBid() : marketRate.getAsk();
+        return valuationCalculator.calculateUnrealizedPnl(
+                position,
+                marketRate == null ? null : "LONG".equals(position.side()) ? marketRate.getBid() : marketRate.getAsk(),
+                scale
+        );
     }
 
     private PositionTradeInput toInput(Trade trade) {
@@ -148,6 +178,25 @@ public class PositionService {
                 .collect(Collectors.toMap(
                         rate -> rate.getCurrencyPair().getSymbol(),
                         rate -> rate,
+                        (first, ignored) -> first
+                ));
+    }
+
+    private Map<String, MarginRule> loadMarginRules() {
+        return marginRuleRepository.findAll().stream()
+                .filter(rule -> Boolean.TRUE.equals(rule.getEnabled()))
+                .collect(Collectors.toMap(
+                        MarginRule::getCurrencyPair,
+                        rule -> rule,
+                        (first, ignored) -> first
+                ));
+    }
+
+    private Map<String, BigDecimal> toMidRateMap(Map<String, MarketRate> rates) {
+        return rates.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        entry -> entry.getValue().getMidPrice(),
                         (first, ignored) -> first
                 ));
     }
