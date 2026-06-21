@@ -1,7 +1,6 @@
 package com.example.fx.demo.backend.position;
 
 import com.example.fx.demo.backend.common.enums.OrderSide;
-import com.example.fx.demo.backend.position.dto.PositionResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -9,12 +8,13 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 class PositionNettingCalculator {
 
-    private static final CurrencyPairScale DEFAULT_SCALE = new CurrencyPairScale(8, 4);
+    private static final CurrencyPairScale DEFAULT_SCALE = new CurrencyPairScale("USD", 8, 4);
 
-    List<PositionResponse> calculate(
+    PositionCalculationResult calculate(
             List<PositionTradeInput> trades,
             Map<String, CurrencyPairScale> scales
     ) {
@@ -29,16 +29,36 @@ class PositionNettingCalculator {
             accumulator.apply(trade, scale);
         }
 
-        return accumulators.entrySet().stream()
+        List<PositionSnapshot> openPositions = accumulators.entrySet().stream()
                 .filter(entry -> entry.getValue().hasOpenPosition())
                 .sorted(Map.Entry.comparingByKey())
-                .map(entry -> entry.getValue().toResponse(entry.getKey(), scales.getOrDefault(entry.getKey(), DEFAULT_SCALE)))
+                .map(entry -> entry.getValue().toSnapshot(entry.getKey(), scales.getOrDefault(entry.getKey(), DEFAULT_SCALE)))
                 .toList();
+        Map<String, BigDecimal> realizedByCurrency = summarizeRealized(accumulators, scales);
+
+        return new PositionCalculationResult(openPositions, realizedByCurrency);
+    }
+
+    private Map<String, BigDecimal> summarizeRealized(
+            Map<String, PositionAccumulator> accumulators,
+            Map<String, CurrencyPairScale> scales
+    ) {
+        Map<String, BigDecimal> summary = new TreeMap<>();
+        for (Map.Entry<String, PositionAccumulator> entry : accumulators.entrySet()) {
+            CurrencyPairScale scale = scales.getOrDefault(entry.getKey(), DEFAULT_SCALE);
+            BigDecimal realized = entry.getValue().realizedPnl.setScale(scale.pnlScale(), RoundingMode.HALF_UP);
+            if (realized.signum() == 0) {
+                continue;
+            }
+            summary.merge(scale.quoteCurrency(), realized, BigDecimal::add);
+        }
+        return summary;
     }
 
     private static final class PositionAccumulator {
         private BigDecimal signedQuantity = BigDecimal.ZERO;
         private BigDecimal averagePrice = BigDecimal.ZERO;
+        private BigDecimal realizedPnl = BigDecimal.ZERO;
         private LocalDateTime updatedAt;
 
         private void apply(PositionTradeInput trade, CurrencyPairScale scale) {
@@ -70,6 +90,12 @@ class PositionNettingCalculator {
         private void applyOppositeSideTrade(BigDecimal tradeQuantity, BigDecimal tradePrice) {
             BigDecimal currentAbs = signedQuantity.abs();
             BigDecimal tradeAbs = tradeQuantity.abs();
+            BigDecimal closeQuantity = currentAbs.min(tradeAbs);
+            if (signedQuantity.signum() > 0) {
+                realizedPnl = realizedPnl.add(tradePrice.subtract(averagePrice).multiply(closeQuantity));
+            } else {
+                realizedPnl = realizedPnl.add(averagePrice.subtract(tradePrice).multiply(closeQuantity));
+            }
             int comparison = tradeAbs.compareTo(currentAbs);
 
             if (comparison < 0) {
@@ -89,12 +115,13 @@ class PositionNettingCalculator {
             return signedQuantity.signum() != 0;
         }
 
-        private PositionResponse toResponse(String currencyPair, CurrencyPairScale scale) {
-            return new PositionResponse(
+        private PositionSnapshot toSnapshot(String currencyPair, CurrencyPairScale scale) {
+            return new PositionSnapshot(
                     currencyPair,
                     signedQuantity.signum() > 0 ? "LONG" : "SHORT",
                     signedQuantity.abs().setScale(scale.quantityScale(), RoundingMode.HALF_UP),
                     averagePrice.setScale(scale.priceScale(), RoundingMode.HALF_UP),
+                    scale.quoteCurrency(),
                     updatedAt
             );
         }

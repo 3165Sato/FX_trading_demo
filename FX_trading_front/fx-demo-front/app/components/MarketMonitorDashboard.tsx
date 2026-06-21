@@ -7,6 +7,7 @@ import {
   fetchMarketAlerts,
   fetchMarketRateTicks,
   fetchOrders,
+  fetchPnlSummary,
   fetchPositions,
   fetchTrades,
   fetchNewsEvents,
@@ -21,6 +22,7 @@ import {
   type NewsEvent,
   type OrderSide,
   type OrderSummary,
+  type PnlSummary,
   type PositionSummary,
   type SpreadStats,
   type TradeSummary,
@@ -50,6 +52,7 @@ export function MarketMonitorDashboard() {
   const [trades, setTrades] = useState<TradeSummary[]>([]);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [positions, setPositions] = useState<PositionSummary[]>([]);
+  const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
@@ -65,6 +68,7 @@ export function MarketMonitorDashboard() {
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [positionsError, setPositionsError] = useState<string | null>(null);
+  const [pnlSummaryError, setPnlSummaryError] = useState<string | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
@@ -251,6 +255,16 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadPnlSummary = useCallback(async () => {
+    try {
+      const nextSummary = await fetchPnlSummary();
+      setPnlSummary(nextSummary);
+      setPnlSummaryError(null);
+    } catch (error) {
+      setPnlSummaryError(getErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -283,6 +297,7 @@ export function MarketMonitorDashboard() {
       void loadTrades();
       void loadOrders();
       void loadPositions();
+      void loadPnlSummary();
     };
     const initialTimeoutId = window.setTimeout(loadTradeData, 0);
     const intervalId = window.setInterval(loadTradeData, 5000);
@@ -290,7 +305,7 @@ export function MarketMonitorDashboard() {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadOrders, loadPositions, loadTrades]);
+  }, [loadOrders, loadPnlSummary, loadPositions, loadTrades]);
 
   useEffect(() => {
     const loadSelectedMarketData = () => {
@@ -348,6 +363,7 @@ export function MarketMonitorDashboard() {
     tradesError ??
     ordersError ??
     positionsError ??
+    pnlSummaryError ??
     newsEventsError;
 
   const setActiveScreen = (nextScreen: Screen) => {
@@ -381,6 +397,7 @@ export function MarketMonitorDashboard() {
     void loadTrades();
     void loadOrders();
     void loadPositions();
+    void loadPnlSummary();
     void loadNewsEvents();
   };
 
@@ -403,6 +420,7 @@ export function MarketMonitorDashboard() {
       void loadTrades();
       void loadOrders();
       void loadPositions();
+      void loadPnlSummary();
     } catch (error) {
       setOrderError(getErrorMessage(error));
     } finally {
@@ -456,6 +474,7 @@ export function MarketMonitorDashboard() {
             orderQuantity={orderQuantity}
             orders={orders}
             positions={positions}
+            pnlSummary={pnlSummary}
             rates={monitoredRates}
             selectedRate={selectedRate}
             submittingOrderSide={submittingOrderSide}
@@ -669,6 +688,7 @@ function TradingScreen({
   orderQuantity,
   orders,
   positions,
+  pnlSummary,
   rates,
   selectedRate,
   submittingOrderSide,
@@ -683,6 +703,7 @@ function TradingScreen({
   orderQuantity: string;
   orders: OrderSummary[];
   positions: PositionSummary[];
+  pnlSummary: PnlSummary | null;
   rates: MarketRate[];
   selectedRate?: MarketRate;
   submittingOrderSide: OrderSide | null;
@@ -721,7 +742,7 @@ function TradingScreen({
           <ExecutionHistoryPanel trades={trades} onSelectPair={onSelectPair} />
           <OrderHistoryPanel orders={orders} />
           <PositionsTable positions={positions} />
-          <RiskPlaceholder />
+          <PnlSummaryPanel summary={pnlSummary} />
         </div>
       </div>
       </div>
@@ -1297,6 +1318,7 @@ function PositionsTable({ positions }: { positions: PositionSummary[] }) {
 
 function PositionRow({ position }: { position: PositionSummary }) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
+  const pnlClass = pnlToneClass(position.unrealizedPnl);
   return (
     <div className="grid grid-cols-6 gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
       <span className="text-[#e6edf3]">{position.currencyPair}</span>
@@ -1305,19 +1327,27 @@ function PositionRow({ position }: { position: PositionSummary }) {
       <span className="text-right text-[#adbac7]">
         {formatPrice(position.averagePrice, position.currencyPair)}
       </span>
-      <span className="text-right text-[#768390]">--</span>
-      <span className="text-right text-[#768390]">--</span>
+      <span className="text-right text-[#adbac7]">
+        {position.currentPrice === null ? "--" : formatPrice(position.currentPrice, position.currencyPair)}
+      </span>
+      <span className={`text-right ${pnlClass}`}>
+        {position.unrealizedPnl === null
+          ? "--"
+          : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
+      </span>
     </div>
   );
 }
 
-function RiskPlaceholder() {
+function PnlSummaryPanel({ summary }: { summary: PnlSummary | null }) {
+  const unrealizedRows = formatCurrencyMap(summary?.unrealizedByCurrency);
+  const realizedRows = formatCurrencyMap(summary?.realizedByCurrency);
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
-      <PanelHeader title="P&L / Margin" meta="Coming soon" />
+      <PanelHeader title="P&L / Margin" meta="quote currency" />
       <div className="grid gap-px bg-[#262d38] md:grid-cols-3">
-        <AccountMetric label="Unrealized P&L" value="Coming soon" muted />
-        <AccountMetric label="Realized P&L" value="Coming soon" muted />
+        <PnlMetric label="Unrealized P&L" rows={unrealizedRows} />
+        <PnlMetric label="Realized P&L" rows={realizedRows} />
         <AccountMetric label="Loss cut" value="50%" />
       </div>
       <div className="px-4 py-6">
@@ -1326,6 +1356,31 @@ function RiskPlaceholder() {
         </div>
       </div>
     </section>
+  );
+}
+
+function PnlMetric({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: Array<{ currency: string; value: number }>;
+}) {
+  return (
+    <div className="bg-[#161b22] px-4 py-3">
+      <div className="text-[10px] uppercase text-[#768390]">{label}</div>
+      <div className="mt-1 flex min-h-5 flex-col gap-1 font-mono text-sm font-semibold">
+        {rows.length === 0 ? (
+          <span className="text-[#768390]">--</span>
+        ) : (
+          rows.map((row) => (
+            <span key={row.currency} className={pnlToneClass(row.value)}>
+              {formatCurrencyAmount(row.currency, row.value)}
+            </span>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1451,8 +1506,36 @@ function formatPrice(value: number, currencyPair: string): string {
   return value.toFixed(getPriceScale(currencyPair));
 }
 
+function formatCurrencyAmount(currency: string, value: number): string {
+  const fractionDigits = currency === "JPY" ? 0 : 2;
+  const formatted = new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: fractionDigits,
+  }).format(Math.abs(value));
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${currency} ${sign}${formatted}`;
+}
+
+function formatCurrencyMap(
+  values?: Record<string, number>,
+): Array<{ currency: string; value: number }> {
+  if (!values) {
+    return [];
+  }
+  return Object.entries(values)
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([currency, value]) => ({ currency, value }));
+}
+
 function formatQuantity(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+}
+
+function pnlToneClass(value: number | null): string {
+  if (value === null || value === 0) {
+    return "text-[#768390]";
+  }
+  return value > 0 ? "text-[#3fb950]" : "text-[#f85149]";
 }
 
 function formatSignedChange(value: number, scale: number): string {

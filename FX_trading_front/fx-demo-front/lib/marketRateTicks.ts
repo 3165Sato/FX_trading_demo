@@ -93,7 +93,15 @@ export type PositionSummary = {
   side: "LONG" | "SHORT";
   quantity: number;
   averagePrice: number;
+  quoteCurrency: string;
+  currentPrice: number | null;
+  unrealizedPnl: number | null;
   updatedAt: string;
+};
+
+export type PnlSummary = {
+  unrealizedByCurrency: Record<string, number>;
+  realizedByCurrency: Record<string, number>;
 };
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -239,6 +247,12 @@ export async function fetchPositions(
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions${query ? `?${query}` : ""}`;
 
   return fetchWithRetry<PositionSummary[]>(requestUrl);
+}
+
+export async function fetchPnlSummary(): Promise<PnlSummary> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/pnl/summary`;
+
+  return fetchWithRetry<PnlSummary>(requestUrl);
 }
 
 async function fetchWithRetry<T>(
