@@ -1314,12 +1314,14 @@ function OrderHistoryPanel({ orders }: { orders: OrderSummary[] }) {
 
 function OrderRow({ order }: { order: OrderSummary }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
+  const statusLabel = order.source === "LOSS_CUT" ? "LOSS_CUT" : order.status;
+  const statusClass = order.source === "LOSS_CUT" ? "text-[#f85149]" : "text-[#adbac7]";
   return (
     <div className="grid grid-cols-[80px_1fr_78px_92px] gap-3 border-b border-[#202832] px-3 py-3 font-mono text-[11px]">
       <span className="text-[#768390]">{formatTime(order.requestedAt)}</span>
       <span className="text-[#e6edf3]">{order.currencyPair}</span>
       <span className={sideClass}>{order.side}</span>
-      <span className="text-right text-[#adbac7]">{order.status}</span>
+      <span className={`text-right ${statusClass}`}>{statusLabel}</span>
     </div>
   );
 }

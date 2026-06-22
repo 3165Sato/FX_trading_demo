@@ -1,16 +1,22 @@
 package com.example.fx.demo.backend.trade;
 
+import com.example.fx.demo.backend.account.AccountSummaryService;
+import com.example.fx.demo.backend.account.dto.AccountSummaryResponse;
 import com.example.fx.demo.backend.account.Account;
 import com.example.fx.demo.backend.account.AccountRepository;
 import com.example.fx.demo.backend.common.enums.OrderSide;
+import com.example.fx.demo.backend.common.enums.OrderSource;
 import com.example.fx.demo.backend.common.enums.OrderStatus;
 import com.example.fx.demo.backend.common.enums.OrderType;
 import com.example.fx.demo.backend.market.CurrencyPair;
 import com.example.fx.demo.backend.market.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.MarketRate;
 import com.example.fx.demo.backend.market.MarketRateRepository;
+import com.example.fx.demo.backend.margin.MarginRiskService;
 import com.example.fx.demo.backend.order.FxOrder;
 import com.example.fx.demo.backend.order.FxOrderRepository;
+import com.example.fx.demo.backend.position.PositionService;
+import com.example.fx.demo.backend.position.dto.PositionResponse;
 import com.example.fx.demo.backend.trade.dto.MarketOrderRequest;
 import com.example.fx.demo.backend.trade.dto.OrderResultResponse;
 import com.example.fx.demo.backend.trade.dto.OrderSummaryResponse;
@@ -24,6 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -35,25 +42,52 @@ public class TradeExecutionService {
     private final AccountRepository accountRepository;
     private final CurrencyPairRepository currencyPairRepository;
     private final MarketRateRepository marketRateRepository;
+    private final AccountSummaryService accountSummaryService;
     private final FxOrderRepository fxOrderRepository;
+    private final MarginRiskService marginRiskService;
+    private final PositionService positionService;
     private final TradeRepository tradeRepository;
+    private final AccountTradeLockService accountTradeLockService;
 
     public TradeExecutionService(
             AccountRepository accountRepository,
             CurrencyPairRepository currencyPairRepository,
             MarketRateRepository marketRateRepository,
+            AccountSummaryService accountSummaryService,
             FxOrderRepository fxOrderRepository,
-            TradeRepository tradeRepository
+            MarginRiskService marginRiskService,
+            PositionService positionService,
+            TradeRepository tradeRepository,
+            AccountTradeLockService accountTradeLockService
     ) {
         this.accountRepository = accountRepository;
         this.currencyPairRepository = currencyPairRepository;
         this.marketRateRepository = marketRateRepository;
+        this.accountSummaryService = accountSummaryService;
         this.fxOrderRepository = fxOrderRepository;
+        this.marginRiskService = marginRiskService;
+        this.positionService = positionService;
         this.tradeRepository = tradeRepository;
+        this.accountTradeLockService = accountTradeLockService;
     }
 
     @Transactional
     public OrderResultResponse placeMarketOrder(MarketOrderRequest request) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> placeMarketOrderLocked(request)
+        );
+    }
+
+    @Transactional
+    public List<OrderResultResponse> liquidateAllPositionsIfMarginRatioAtOrBelow(BigDecimal threshold) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> liquidateAllPositionsIfStillUnsafe(threshold)
+        );
+    }
+
+    private OrderResultResponse placeMarketOrderLocked(MarketOrderRequest request) {
         validateRequest(request);
         Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
@@ -72,17 +106,67 @@ public class TradeExecutionService {
         BigDecimal quantity = request.quantity().setScale(currencyPair.getQuantityScale(), RoundingMode.HALF_UP);
         BigDecimal executionPrice = executionPrice(request.side(), marketRate)
                 .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        marginRiskService.assertSufficientMargin(currencyPair.getSymbol(), request.side(), quantity, executionPrice);
+
+        return executeMarketOrder(account, currencyPair, request.side(), quantity, executionPrice, OrderSource.MANUAL);
+    }
+
+    private List<OrderResultResponse> liquidateAllPositionsIfStillUnsafe(BigDecimal threshold) {
+        AccountSummaryResponse summary = accountSummaryService.getDefaultAccountSummary();
+        if (summary.marginRatio() == null || summary.marginRatio().compareTo(threshold) > 0) {
+            return List.of();
+        }
+
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        List<OrderResultResponse> results = new ArrayList<>();
+        for (PositionResponse position : positionService.getPositions(null)) {
+            CurrencyPair currencyPair = currencyPairRepository.findBySymbol(position.currencyPair())
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Currency pair not found: " + position.currencyPair()
+                    ));
+            MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "Latest market rate is not available: " + currencyPair.getSymbol()
+                    ));
+            OrderSide liquidationSide = "LONG".equals(position.side()) ? OrderSide.SELL : OrderSide.BUY;
+            BigDecimal quantity = position.quantity().setScale(currencyPair.getQuantityScale(), RoundingMode.HALF_UP);
+            BigDecimal executionPrice = executionPrice(liquidationSide, marketRate)
+                    .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+            results.add(executeMarketOrder(
+                    account,
+                    currencyPair,
+                    liquidationSide,
+                    quantity,
+                    executionPrice,
+                    OrderSource.LOSS_CUT
+            ));
+        }
+        return results;
+    }
+
+    private OrderResultResponse executeMarketOrder(
+            Account account,
+            CurrencyPair currencyPair,
+            OrderSide side,
+            BigDecimal quantity,
+            BigDecimal executionPrice,
+            OrderSource source
+    ) {
         LocalDateTime now = LocalDateTime.now();
 
         FxOrder order = new FxOrder();
         order.setAccountId(account.getId());
         order.setCurrencyPair(currencyPair.getSymbol());
-        order.setSide(request.side());
+        order.setSide(side);
         order.setOrderType(OrderType.MARKET);
         order.setQuantity(quantity);
         order.setOrderPrice(executionPrice);
         // 既存DBのOrderStatus制約に合わせ、即時約定済みの注文はEXECUTEDとして保存する。
         order.setStatus(OrderStatus.EXECUTED);
+        order.setSource(source);
         order.setRequestedAt(now);
         order.setExecutedAt(now);
         FxOrder savedOrder = fxOrderRepository.save(order);
@@ -91,7 +175,7 @@ public class TradeExecutionService {
         trade.setOrderId(savedOrder.getId());
         trade.setAccountId(account.getId());
         trade.setCurrencyPair(currencyPair.getSymbol());
-        trade.setSide(request.side());
+        trade.setSide(side);
         trade.setQuantity(quantity);
         trade.setExecutionPrice(executionPrice);
         trade.setExecutedAt(now);
@@ -155,6 +239,7 @@ public class TradeExecutionService {
                 order.getOrderType().name(),
                 order.getQuantity(),
                 order.getStatus().name(),
+                order.getSource() == null ? OrderSource.MANUAL.name() : order.getSource().name(),
                 order.getRequestedAt()
         );
     }

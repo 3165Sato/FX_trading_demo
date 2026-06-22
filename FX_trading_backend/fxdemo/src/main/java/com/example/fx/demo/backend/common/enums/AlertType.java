@@ -5,5 +5,7 @@ public enum AlertType {
     RAPID_MOVE,
     STALE_DATA,
     CROSSED_QUOTE,
-    VOLATILITY_SURGE
+    VOLATILITY_SURGE,
+    MARGIN_WARNING,
+    LOSS_CUT
 }

@@ -80,6 +80,7 @@ export type OrderSummary = {
   orderType: string;
   quantity: number;
   status: string;
+  source: "MANUAL" | "LOSS_CUT";
   requestedAt: string;
 };
 
@@ -325,7 +326,8 @@ async function requestJson<T>(
     });
 
     if (!response.ok) {
-      throw new Error(`Market API request failed (${response.status}) at ${requestUrl}`);
+      const message = await readErrorMessage(response);
+      throw new Error(message ?? `Market API request failed (${response.status}) at ${requestUrl}`);
     }
 
     return response.json() as Promise<T>;
@@ -336,6 +338,15 @@ async function requestJson<T>(
     throw error;
   } finally {
     clearTimeout(timeoutId);
+  }
+}
+
+async function readErrorMessage(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { message?: unknown };
+    return typeof body.message === "string" ? body.message : null;
+  } catch {
+    return null;
   }
 }
 

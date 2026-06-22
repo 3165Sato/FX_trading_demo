@@ -10,6 +10,7 @@ public record OrderSummaryResponse(
         String orderType,
         BigDecimal quantity,
         String status,
+        String source,
         LocalDateTime requestedAt
 ) {
 }

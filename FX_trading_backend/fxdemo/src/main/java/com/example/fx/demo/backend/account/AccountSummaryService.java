@@ -4,6 +4,7 @@ import com.example.fx.demo.backend.account.dto.AccountSummaryResponse;
 import com.example.fx.demo.backend.market.MarketRate;
 import com.example.fx.demo.backend.market.MarketRateRepository;
 import com.example.fx.demo.backend.margin.CurrencyConverter;
+import com.example.fx.demo.backend.margin.MarginProperties;
 import com.example.fx.demo.backend.position.PositionService;
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
@@ -23,21 +24,21 @@ import java.util.stream.Collectors;
 public class AccountSummaryService {
 
     private static final String BASE_CURRENCY = "JPY";
-    private static final BigDecimal LOSS_CUT_THRESHOLD = new BigDecimal("50");
-    private static final BigDecimal WARNING_THRESHOLD = new BigDecimal("100");
-
     private final AccountRepository accountRepository;
+    private final MarginProperties marginProperties;
     private final MarketRateRepository marketRateRepository;
     private final PositionService positionService;
     private final CurrencyConverter currencyConverter;
 
     public AccountSummaryService(
             AccountRepository accountRepository,
+            MarginProperties marginProperties,
             MarketRateRepository marketRateRepository,
             PositionService positionService,
             CurrencyConverter currencyConverter
     ) {
         this.accountRepository = accountRepository;
+        this.marginProperties = marginProperties;
         this.marketRateRepository = marketRateRepository;
         this.positionService = positionService;
         this.currencyConverter = currencyConverter;
@@ -71,7 +72,7 @@ public class AccountSummaryService {
                 usedMargin,
                 scaleJpy(freeMargin),
                 marginRatio,
-                LOSS_CUT_THRESHOLD,
+                marginProperties.getLossCut().getThresholdPercent(),
                 status
         );
     }
@@ -125,10 +126,10 @@ public class AccountSummaryService {
         if (marginRatio == null) {
             return "SAFE";
         }
-        if (marginRatio.compareTo(LOSS_CUT_THRESHOLD) <= 0) {
+        if (marginRatio.compareTo(marginProperties.getLossCut().getThresholdPercent()) <= 0) {
             return "DANGER";
         }
-        if (marginRatio.compareTo(WARNING_THRESHOLD) <= 0) {
+        if (marginRatio.compareTo(marginProperties.getLossCut().getWarningPercent()) <= 0) {
             return "WARNING";
         }
         return "SAFE";

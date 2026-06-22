@@ -77,6 +77,19 @@ public class AnomalyAlertService {
                 .toList();
     }
 
+    public void raiseAccountAlert(
+            AlertType type,
+            AlertSeverity severity,
+            String message,
+            Instant now
+    ) {
+        raiseOrUpdate("ACCOUNT", type, severity, message, null, now);
+    }
+
+    public void resolveAccountAlert(AlertType type, Instant now) {
+        resolve("ACCOUNT", type, now);
+    }
+
     private void evaluateSpreadWide(MarketRate rate, Instant now) {
         if (!properties.getRules().getSpread().isEnabled()) {
             resolve(rate, AlertType.SPREAD_WIDE, now);
@@ -97,7 +110,7 @@ public class AnomalyAlertService {
         }
 
         raiseOrUpdate(
-                rate,
+                rate.getCurrencyPair().getSymbol(),
                 AlertType.SPREAD_WIDE,
                 severity,
                 "Spread is wider than recent baseline: " + stats.spreadPips() + " pips",
@@ -142,7 +155,7 @@ public class AnomalyAlertService {
         BigDecimal changePips = toPips(delta.abs(), rate.getCurrencyPair().getPipScale());
         String direction = delta.compareTo(BigDecimal.ZERO) >= 0 ? "UP" : "DOWN";
         raiseOrUpdate(
-                rate,
+                rate.getCurrencyPair().getSymbol(),
                 AlertType.RAPID_MOVE,
                 severity,
                 "Rapid " + direction + " move detected: " + changeBps.setScale(1, RoundingMode.HALF_UP) + " bps",
@@ -172,7 +185,7 @@ public class AnomalyAlertService {
         }
 
         raiseOrUpdate(
-                rate,
+                rate.getCurrencyPair().getSymbol(),
                 AlertType.STALE_DATA,
                 severity,
                 "Rate data is stale: " + ageSeconds + " seconds since last quote",
@@ -189,7 +202,7 @@ public class AnomalyAlertService {
 
         if (rate.getBid() != null && rate.getAsk() != null && rate.getBid().compareTo(rate.getAsk()) >= 0) {
             raiseOrUpdate(
-                    rate,
+                    rate.getCurrencyPair().getSymbol(),
                     AlertType.CROSSED_QUOTE,
                     AlertSeverity.CRITICAL,
                     "Crossed quote detected: bid is greater than or equal to ask",
@@ -213,14 +226,14 @@ public class AnomalyAlertService {
     }
 
     private void raiseOrUpdate(
-            MarketRate rate,
+            String currencyPair,
             AlertType type,
             AlertSeverity severity,
             String message,
             BigDecimal changePips,
             Instant now
     ) {
-        AlertKey key = new AlertKey(rate.getCurrencyPair().getSymbol(), type);
+        AlertKey key = new AlertKey(currencyPair, type);
         activeAlerts.compute(key, (alertKey, current) -> {
             if (current == null || !current.active) {
                 AlertState next = new AlertState(
@@ -245,7 +258,11 @@ public class AnomalyAlertService {
     }
 
     private void resolve(MarketRate rate, AlertType type, Instant now) {
-        AlertKey key = new AlertKey(rate.getCurrencyPair().getSymbol(), type);
+        resolve(rate.getCurrencyPair().getSymbol(), type, now);
+    }
+
+    private void resolve(String currencyPair, AlertType type, Instant now) {
+        AlertKey key = new AlertKey(currencyPair, type);
         activeAlerts.computeIfPresent(key, (alertKey, current) -> {
             current.active = false;
             current.resolvedAt = now;

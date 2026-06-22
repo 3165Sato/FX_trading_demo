@@ -2,6 +2,7 @@ package com.example.fx.demo.backend.position;
 
 import com.example.fx.demo.backend.account.Account;
 import com.example.fx.demo.backend.account.AccountRepository;
+import com.example.fx.demo.backend.common.enums.OrderSide;
 import com.example.fx.demo.backend.market.CurrencyPair;
 import com.example.fx.demo.backend.market.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.MarketRate;
@@ -21,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -95,6 +97,24 @@ public class PositionService {
         return new PnlSummaryResponse(unrealizedByCurrency, result.realizedByCurrency());
     }
 
+    @Transactional(readOnly = true)
+    public BigDecimal calculateProjectedUsedMargin(
+            String currencyPair,
+            OrderSide side,
+            BigDecimal quantity,
+            BigDecimal executionPrice
+    ) {
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        List<PositionTradeInput> inputs = tradeRepository.findByAccountIdOrderByExecutedAtAsc(account.getId()).stream()
+                .map(this::toInput)
+                .collect(Collectors.toList());
+        inputs.add(new PositionTradeInput(currencyPair, side, quantity, executionPrice, LocalDateTime.now()));
+
+        PositionCalculationResult projected = calculator.calculate(inputs, loadScales());
+        return calculateUsedMargin(projected.openPositions());
+    }
+
     private PositionCalculationResult calculatePositions(String currencyPair) {
         Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
@@ -140,6 +160,27 @@ public class PositionService {
         BigDecimal notionalQuote = position.quantity().multiply(marketRate.getMidPrice());
         BigDecimal requiredMarginQuote = notionalQuote.divide(leverage, MARGIN_SCALE, RoundingMode.HALF_UP);
         return currencyConverter.toJpy(requiredMarginQuote, position.quoteCurrency(), midRates);
+    }
+
+    private BigDecimal calculateUsedMargin(List<PositionSnapshot> positions) {
+        Map<String, MarketRate> rates = loadRates();
+        Map<String, MarginRule> marginRules = loadMarginRules();
+        Map<String, BigDecimal> midRates = toMidRateMap(rates);
+
+        BigDecimal total = BigDecimal.ZERO;
+        for (PositionSnapshot position : positions) {
+            BigDecimal requiredMargin = calculateRequiredMargin(
+                    position,
+                    rates.get(position.currencyPair()),
+                    marginRules.get(position.currencyPair()),
+                    midRates
+            );
+            if (requiredMargin == null) {
+                return null;
+            }
+            total = total.add(requiredMargin);
+        }
+        return total.setScale(0, RoundingMode.HALF_UP);
     }
 
     private BigDecimal calculateUnrealizedPnl(

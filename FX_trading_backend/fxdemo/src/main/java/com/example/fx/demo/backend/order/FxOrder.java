@@ -3,6 +3,7 @@ package com.example.fx.demo.backend.order;
 import com.example.fx.demo.backend.common.entity.BaseEntity;
 import com.example.fx.demo.backend.common.enums.OrderSide;
 import com.example.fx.demo.backend.common.enums.OrderStatus;
+import com.example.fx.demo.backend.common.enums.OrderSource;
 import com.example.fx.demo.backend.common.enums.OrderType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -36,6 +37,9 @@ public class FxOrder extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
+
+    @Enumerated(EnumType.STRING)
+    private OrderSource source = OrderSource.MANUAL;
 
     private LocalDateTime requestedAt;
     private LocalDateTime executedAt;
@@ -97,6 +101,14 @@ public class FxOrder extends BaseEntity {
 
     public void setStatus(OrderStatus status) {
         this.status = status;
+    }
+
+    public OrderSource getSource() {
+        return source;
+    }
+
+    public void setSource(OrderSource source) {
+        this.source = source;
     }
 
     public LocalDateTime getRequestedAt() {
