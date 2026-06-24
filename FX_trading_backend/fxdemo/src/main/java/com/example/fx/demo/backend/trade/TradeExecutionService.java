@@ -108,7 +108,46 @@ public class TradeExecutionService {
                 .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
         marginRiskService.assertSufficientMargin(currencyPair.getSymbol(), request.side(), quantity, executionPrice);
 
-        return executeMarketOrder(account, currencyPair, request.side(), quantity, executionPrice, OrderSource.MANUAL);
+        return executeMarketOrder(account, currencyPair, request.side(), quantity, executionPrice, OrderType.MARKET, OrderSource.MANUAL);
+    }
+
+    public OrderResultResponse executeTriggeredOrder(
+            String currencyPairSymbol,
+            OrderSide side,
+            BigDecimal quantity,
+            OrderType orderType
+    ) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> executeTriggeredOrderLocked(currencyPairSymbol, side, quantity, orderType)
+        );
+    }
+
+    private OrderResultResponse executeTriggeredOrderLocked(
+            String currencyPairSymbol,
+            OrderSide side,
+            BigDecimal requestedQuantity,
+            OrderType orderType
+    ) {
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(currencyPairSymbol)
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Currency pair not found: " + currencyPairSymbol
+                ));
+        MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Latest market rate is not available: " + currencyPair.getSymbol()
+                ));
+        BigDecimal quantity = requestedQuantity.setScale(currencyPair.getQuantityScale(), RoundingMode.HALF_UP);
+        BigDecimal executionPrice = executionPrice(side, marketRate)
+                .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        marginRiskService.assertSufficientMargin(currencyPair.getSymbol(), side, quantity, executionPrice);
+
+        return executeMarketOrder(account, currencyPair, side, quantity, executionPrice, orderType, OrderSource.TRIGGER);
     }
 
     private List<OrderResultResponse> liquidateAllPositionsIfStillUnsafe(BigDecimal threshold) {
@@ -141,6 +180,7 @@ public class TradeExecutionService {
                     liquidationSide,
                     quantity,
                     executionPrice,
+                    OrderType.MARKET,
                     OrderSource.LOSS_CUT
             ));
         }
@@ -153,6 +193,7 @@ public class TradeExecutionService {
             OrderSide side,
             BigDecimal quantity,
             BigDecimal executionPrice,
+            OrderType orderType,
             OrderSource source
     ) {
         LocalDateTime now = LocalDateTime.now();
@@ -161,7 +202,7 @@ public class TradeExecutionService {
         order.setAccountId(account.getId());
         order.setCurrencyPair(currencyPair.getSymbol());
         order.setSide(side);
-        order.setOrderType(OrderType.MARKET);
+        order.setOrderType(orderType);
         order.setQuantity(quantity);
         order.setOrderPrice(executionPrice);
         // 既存DBのOrderStatus制約に合わせ、即時約定済みの注文はEXECUTEDとして保存する。

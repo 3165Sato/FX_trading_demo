@@ -62,6 +62,8 @@ export type MarketAlert = {
 };
 
 export type OrderSide = "BUY" | "SELL";
+export type OrderType = "MARKET" | "LIMIT" | "STOP";
+export type PendingOrderStatus = "PENDING" | "WAITING" | "TRIGGERED" | "CANCELED" | "CANCELLED" | "REJECTED" | "EXPIRED";
 
 export type TradeSummary = {
   id: number;
@@ -77,16 +79,30 @@ export type OrderSummary = {
   id: number;
   currencyPair: string;
   side: OrderSide;
-  orderType: string;
+  orderType: OrderType;
   quantity: number;
   status: string;
-  source: "MANUAL" | "LOSS_CUT";
+  source: "MANUAL" | "LOSS_CUT" | "TRIGGER";
   requestedAt: string;
 };
 
 export type OrderResult = {
   order: OrderSummary;
   trade: TradeSummary;
+};
+
+export type PendingOrder = {
+  id: number;
+  currencyPair: string;
+  side: OrderSide;
+  orderType: "LIMIT" | "STOP";
+  quantity: number;
+  triggerPrice: number;
+  status: PendingOrderStatus;
+  createdAt: string;
+  triggeredAt: string | null;
+  resultingOrderId: number | null;
+  rejectionReason: string | null;
 };
 
 export type PositionSummary = {
@@ -222,6 +238,50 @@ export async function placeMarketOrder(
       quantity,
     }),
   });
+}
+
+export async function placePendingOrder(
+  currencyPair: string,
+  side: OrderSide,
+  orderType: "LIMIT" | "STOP",
+  quantity: number,
+  triggerPrice: number,
+): Promise<PendingOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders/pending`;
+
+  return fetchWithRetry<PendingOrder>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      currencyPair,
+      side,
+      orderType,
+      quantity,
+      triggerPrice,
+    }),
+  });
+}
+
+export async function fetchPendingOrders(
+  status = "PENDING",
+  currencyPair?: string,
+  limit = 50,
+): Promise<PendingOrder[]> {
+  const params = new URLSearchParams({
+    status,
+    limit: String(limit),
+  });
+  if (currencyPair) {
+    params.set("currencyPair", currencyPair);
+  }
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders/pending?${params.toString()}`;
+
+  return fetchWithRetry<PendingOrder[]>(requestUrl);
+}
+
+export async function cancelPendingOrder(id: number): Promise<PendingOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders/pending/${id}/cancel`;
+
+  return fetchWithRetry<PendingOrder>(requestUrl, { method: "POST" });
 }
 
 export async function fetchTrades(

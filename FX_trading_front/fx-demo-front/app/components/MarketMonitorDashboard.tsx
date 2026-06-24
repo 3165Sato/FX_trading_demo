@@ -3,16 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  cancelPendingOrder,
   fetchAccountSummary,
   fetchLatestMarketRates,
   fetchMarketAlerts,
   fetchMarketRateTicks,
   fetchOrders,
+  fetchPendingOrders,
   fetchPnlSummary,
   fetchPositions,
   fetchTrades,
   fetchNewsEvents,
   getSpreadStats,
+  placePendingOrder,
   placeMarketOrder,
   triggerNewsEvent,
   type AccountSummary,
@@ -24,6 +27,8 @@ import {
   type NewsEvent,
   type OrderSide,
   type OrderSummary,
+  type OrderType,
+  type PendingOrder,
   type PnlSummary,
   type PositionSummary,
   type SpreadStats,
@@ -53,6 +58,7 @@ export function MarketMonitorDashboard() {
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
   const [trades, setTrades] = useState<TradeSummary[]>([]);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [positions, setPositions] = useState<PositionSummary[]>([]);
   const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
   const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
@@ -60,7 +66,9 @@ export function MarketMonitorDashboard() {
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
   const [tradingSelectedPair, setTradingSelectedPair] = useState(DEFAULT_PAIR);
+  const [orderType, setOrderType] = useState<OrderType>("MARKET");
   const [orderQuantity, setOrderQuantity] = useState("10000");
+  const [triggerPrice, setTriggerPrice] = useState("");
   const [rateChanges, setRateChanges] = useState<Record<string, number>>({});
   const [ratesLoading, setRatesLoading] = useState(true);
   const [ticksLoading, setTicksLoading] = useState(true);
@@ -70,6 +78,7 @@ export function MarketMonitorDashboard() {
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [pendingOrdersError, setPendingOrdersError] = useState<string | null>(null);
   const [positionsError, setPositionsError] = useState<string | null>(null);
   const [pnlSummaryError, setPnlSummaryError] = useState<string | null>(null);
   const [accountSummaryError, setAccountSummaryError] = useState<string | null>(null);
@@ -82,6 +91,7 @@ export function MarketMonitorDashboard() {
   const [nowMs, setNowMs] = useState(0);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [submittingOrderSide, setSubmittingOrderSide] = useState<OrderSide | null>(null);
+  const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
   const previousRatesRef = useRef<Map<string, number>>(new Map());
 
@@ -249,6 +259,16 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadPendingOrders = useCallback(async () => {
+    try {
+      const nextPendingOrders = await fetchPendingOrders("PENDING", undefined, ORDER_LIMIT);
+      setPendingOrders(nextPendingOrders);
+      setPendingOrdersError(null);
+    } catch (error) {
+      setPendingOrdersError(getErrorMessage(error));
+    }
+  }, []);
+
   const loadPositions = useCallback(async () => {
     try {
       const nextPositions = await fetchPositions();
@@ -310,6 +330,7 @@ export function MarketMonitorDashboard() {
     const loadTradeData = () => {
       void loadTrades();
       void loadOrders();
+      void loadPendingOrders();
       void loadPositions();
       void loadPnlSummary();
       void loadAccountSummary();
@@ -320,7 +341,7 @@ export function MarketMonitorDashboard() {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadAccountSummary, loadOrders, loadPnlSummary, loadPositions, loadTrades]);
+  }, [loadAccountSummary, loadOrders, loadPendingOrders, loadPnlSummary, loadPositions, loadTrades]);
 
   useEffect(() => {
     const loadSelectedMarketData = () => {
@@ -377,6 +398,7 @@ export function MarketMonitorDashboard() {
     alertsError ??
     tradesError ??
     ordersError ??
+    pendingOrdersError ??
     positionsError ??
     pnlSummaryError ??
     accountSummaryError ??
@@ -412,6 +434,7 @@ export function MarketMonitorDashboard() {
     void loadAlerts();
     void loadTrades();
     void loadOrders();
+    void loadPendingOrders();
     void loadPositions();
     void loadPnlSummary();
     void loadAccountSummary();
@@ -424,18 +447,38 @@ export function MarketMonitorDashboard() {
       setOrderError("Quantity must be greater than zero.");
       return;
     }
+    const nextTriggerPrice = Number(triggerPrice);
+    if (orderType !== "MARKET" && (!Number.isFinite(nextTriggerPrice) || nextTriggerPrice <= 0)) {
+      setOrderError("Trigger price must be greater than zero.");
+      return;
+    }
 
     setSubmittingOrderSide(side);
     try {
-      const result = await placeMarketOrder(tradingActivePair, side, quantity);
+      if (orderType === "MARKET") {
+        const result = await placeMarketOrder(tradingActivePair, side, quantity);
+        setLastOrderMessage(
+          `${result.trade.side} ${formatQuantity(result.trade.quantity)} ${result.trade.currencyPair} @ ${formatPrice(result.trade.price, result.trade.currencyPair)}`,
+        );
+        setTrades((current) => [result.trade, ...current].slice(0, TRADE_LIMIT));
+        setOrders((current) => [result.order, ...current].slice(0, ORDER_LIMIT));
+      } else {
+        const pendingOrder = await placePendingOrder(
+          tradingActivePair,
+          side,
+          orderType,
+          quantity,
+          nextTriggerPrice,
+        );
+        setLastOrderMessage(
+          `${pendingOrder.orderType} ${pendingOrder.side} ${formatQuantity(pendingOrder.quantity)} ${pendingOrder.currencyPair} trigger ${formatPrice(pendingOrder.triggerPrice, pendingOrder.currencyPair)}`,
+        );
+        setPendingOrders((current) => [pendingOrder, ...current].slice(0, ORDER_LIMIT));
+      }
       setOrderError(null);
-      setLastOrderMessage(
-        `${result.trade.side} ${formatQuantity(result.trade.quantity)} ${result.trade.currencyPair} @ ${formatPrice(result.trade.price, result.trade.currencyPair)}`,
-      );
-      setTrades((current) => [result.trade, ...current].slice(0, TRADE_LIMIT));
-      setOrders((current) => [result.order, ...current].slice(0, ORDER_LIMIT));
       void loadTrades();
       void loadOrders();
+      void loadPendingOrders();
       void loadPositions();
       void loadPnlSummary();
       void loadAccountSummary();
@@ -443,6 +486,20 @@ export function MarketMonitorDashboard() {
       setOrderError(getErrorMessage(error));
     } finally {
       setSubmittingOrderSide(null);
+    }
+  };
+
+  const cancelSelectedPendingOrder = async (id: number) => {
+    setCancelingPendingOrderId(id);
+    try {
+      await cancelPendingOrder(id);
+      setPendingOrders((current) => current.filter((order) => order.id !== id));
+      setOrderError(null);
+      void loadPendingOrders();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setCancelingPendingOrderId(null);
     }
   };
 
@@ -489,9 +546,12 @@ export function MarketMonitorDashboard() {
           <TradingScreen
             accountSummary={accountSummary}
             activePair={tradingActivePair}
+            cancelingPendingOrderId={cancelingPendingOrderId}
             orderError={orderError}
             orderQuantity={orderQuantity}
+            orderType={orderType}
             orders={orders}
+            pendingOrders={pendingOrders}
             positions={positions}
             pnlSummary={pnlSummary}
             rates={monitoredRates}
@@ -499,9 +559,13 @@ export function MarketMonitorDashboard() {
             submittingOrderSide={submittingOrderSide}
             lastOrderMessage={lastOrderMessage}
             trades={trades}
+            triggerPrice={triggerPrice}
+            onCancelPendingOrder={cancelSelectedPendingOrder}
             onQuantityChange={setOrderQuantity}
+            onOrderTypeChange={setOrderType}
             onSelectPair={selectTradingCurrencyPair}
             onSubmitOrder={submitMarketOrder}
+            onTriggerPriceChange={setTriggerPrice}
           />
         )}
       </div>
@@ -704,9 +768,12 @@ function MonitorScreen({
 function TradingScreen({
   accountSummary,
   activePair,
+  cancelingPendingOrderId,
   orderError,
   orderQuantity,
+  orderType,
   orders,
+  pendingOrders,
   positions,
   pnlSummary,
   rates,
@@ -714,15 +781,22 @@ function TradingScreen({
   submittingOrderSide,
   lastOrderMessage,
   trades,
+  triggerPrice,
+  onCancelPendingOrder,
   onQuantityChange,
+  onOrderTypeChange,
   onSelectPair,
   onSubmitOrder,
+  onTriggerPriceChange,
 }: {
   accountSummary: AccountSummary | null;
   activePair: string;
+  cancelingPendingOrderId: number | null;
   orderError: string | null;
   orderQuantity: string;
+  orderType: OrderType;
   orders: OrderSummary[];
+  pendingOrders: PendingOrder[];
   positions: PositionSummary[];
   pnlSummary: PnlSummary | null;
   rates: MarketRate[];
@@ -730,9 +804,13 @@ function TradingScreen({
   submittingOrderSide: OrderSide | null;
   lastOrderMessage: string | null;
   trades: TradeSummary[];
+  triggerPrice: string;
+  onCancelPendingOrder: (id: number) => void;
   onQuantityChange: (quantity: string) => void;
+  onOrderTypeChange: (orderType: OrderType) => void;
   onSelectPair: (currencyPair: string) => void;
   onSubmitOrder: (side: OrderSide) => void;
+  onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -752,16 +830,25 @@ function TradingScreen({
             error={orderError}
             lastMessage={lastOrderMessage}
             orderQuantity={orderQuantity}
+            orderType={orderType}
             rate={selectedRate}
             submittingSide={submittingOrderSide}
+            triggerPrice={triggerPrice}
             onQuantityChange={onQuantityChange}
+            onOrderTypeChange={onOrderTypeChange}
             onSubmit={onSubmitOrder}
+            onTriggerPriceChange={onTriggerPriceChange}
           />
         </div>
 
         <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
           <ExecutionHistoryPanel trades={trades} onSelectPair={onSelectPair} />
           <OrderHistoryPanel orders={orders} />
+          <PendingOrdersPanel
+            cancelingOrderId={cancelingPendingOrderId}
+            orders={pendingOrders}
+            onCancel={onCancelPendingOrder}
+          />
           <PositionsTable positions={positions} />
           <PnlSummaryPanel accountSummary={accountSummary} summary={pnlSummary} />
         </div>
@@ -893,24 +980,51 @@ function MarketOrderPanel({
   error,
   lastMessage,
   orderQuantity,
+  orderType,
   rate,
   submittingSide,
+  triggerPrice,
   onQuantityChange,
+  onOrderTypeChange,
   onSubmit,
+  onTriggerPriceChange,
 }: {
   activePair: string;
   error: string | null;
   lastMessage: string | null;
   orderQuantity: string;
+  orderType: OrderType;
   rate?: MarketRate;
   submittingSide: OrderSide | null;
+  triggerPrice: string;
   onQuantityChange: (quantity: string) => void;
+  onOrderTypeChange: (orderType: OrderType) => void;
   onSubmit: (side: OrderSide) => void;
+  onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
-      <PanelHeader title="Market order" meta={activePair} />
+      <PanelHeader title="Order ticket" meta={activePair} />
       <div className="space-y-4 px-4 py-4">
+        <div>
+          <span className="text-[10px] uppercase text-[#768390]">Type</span>
+          <div className="mt-2 grid grid-cols-3 gap-1 border border-[#262d38] bg-[#0d1117] p-1">
+            {(["MARKET", "LIMIT", "STOP"] as OrderType[]).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => onOrderTypeChange(type)}
+                className={`px-2 py-2 font-mono text-[11px] transition-colors ${
+                  orderType === type
+                    ? "bg-[#21272f] text-[#e6edf3]"
+                    : "text-[#768390] hover:bg-[#161b22] hover:text-[#e6edf3]"
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="block">
           <span className="text-[10px] uppercase text-[#768390]">Units</span>
           <input
@@ -932,6 +1046,23 @@ function MarketOrderPanel({
             </button>
           ))}
         </div>
+        {orderType !== "MARKET" && (
+          <label className="block">
+            <span className="text-[10px] uppercase text-[#768390]">Trigger price</span>
+            <input
+              value={triggerPrice}
+              onChange={(event) => onTriggerPriceChange(event.target.value)}
+              inputMode="decimal"
+              placeholder={rate ? formatPrice(rate.midPrice, activePair) : undefined}
+              className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+            />
+            <div className="mt-2 font-mono text-[10px] leading-5 text-[#768390]">
+              {orderType === "LIMIT"
+                ? `BUY limit below Ask${rate ? ` ${formatPrice(rate.ask, activePair)}` : ""}; SELL limit above Bid${rate ? ` ${formatPrice(rate.bid, activePair)}` : ""}.`
+                : `BUY stop above Ask${rate ? ` ${formatPrice(rate.ask, activePair)}` : ""}; SELL stop below Bid${rate ? ` ${formatPrice(rate.bid, activePair)}` : ""}.`}
+            </div>
+          </label>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <OrderButton
             disabled={submittingSide !== null || !rate}
@@ -1314,14 +1445,85 @@ function OrderHistoryPanel({ orders }: { orders: OrderSummary[] }) {
 
 function OrderRow({ order }: { order: OrderSummary }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
-  const statusLabel = order.source === "LOSS_CUT" ? "LOSS_CUT" : order.status;
-  const statusClass = order.source === "LOSS_CUT" ? "text-[#f85149]" : "text-[#adbac7]";
+  const statusLabel =
+    order.source === "LOSS_CUT" ? "LOSS_CUT" : order.source === "TRIGGER" ? "TRIGGER" : order.status;
+  const statusClass =
+    order.source === "LOSS_CUT"
+      ? "text-[#f85149]"
+      : order.source === "TRIGGER"
+        ? "text-[#d29922]"
+        : "text-[#adbac7]";
   return (
     <div className="grid grid-cols-[80px_1fr_78px_92px] gap-3 border-b border-[#202832] px-3 py-3 font-mono text-[11px]">
       <span className="text-[#768390]">{formatTime(order.requestedAt)}</span>
       <span className="text-[#e6edf3]">{order.currencyPair}</span>
       <span className={sideClass}>{order.side}</span>
       <span className={`text-right ${statusClass}`}>{statusLabel}</span>
+    </div>
+  );
+}
+
+function PendingOrdersPanel({
+  cancelingOrderId,
+  orders,
+  onCancel,
+}: {
+  cancelingOrderId: number | null;
+  orders: PendingOrder[];
+  onCancel: (id: number) => void;
+}) {
+  return (
+    <section className="border border-[#262d38] bg-[#161b22]">
+      <PanelHeader title="Pending orders" meta={`${orders.length} waiting`} />
+      <div className="grid grid-cols-[76px_62px_62px_1fr_72px] border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+        <span>Pair</span>
+        <span>Type</span>
+        <span>Side</span>
+        <span className="text-right">Trigger</span>
+        <span className="text-right">Action</span>
+      </div>
+      <div className="max-h-[260px] overflow-y-auto">
+        {orders.length === 0 ? (
+          <div className="px-4 py-12 text-center text-sm text-[#768390]">No pending orders</div>
+        ) : (
+          orders.map((order) => (
+            <PendingOrderRow
+              key={order.id}
+              canceling={cancelingOrderId === order.id}
+              order={order}
+              onCancel={onCancel}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PendingOrderRow({
+  canceling,
+  order,
+  onCancel,
+}: {
+  canceling: boolean;
+  order: PendingOrder;
+  onCancel: (id: number) => void;
+}) {
+  const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
+  return (
+    <div className="grid grid-cols-[76px_62px_62px_1fr_72px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+      <span className="text-[#e6edf3]">{order.currencyPair}</span>
+      <span className="text-[#d29922]">{order.orderType}</span>
+      <span className={sideClass}>{order.side}</span>
+      <span className="text-right text-[#adbac7]">{formatPrice(order.triggerPrice, order.currencyPair)}</span>
+      <button
+        type="button"
+        disabled={canceling}
+        onClick={() => onCancel(order.id)}
+        className="border border-[#262d38] px-2 py-1 text-[10px] text-[#adbac7] hover:bg-[#21272f] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {canceling ? "..." : "Cancel"}
+      </button>
     </div>
   );
 }

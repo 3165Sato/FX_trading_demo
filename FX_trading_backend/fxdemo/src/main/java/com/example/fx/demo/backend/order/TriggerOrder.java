@@ -8,6 +8,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.Column;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -25,13 +26,18 @@ public class TriggerOrder extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private OrderType orderType;
 
+    @Column(precision = 19, scale = 4)
     private BigDecimal quantity;
+
+    @Column(precision = 19, scale = 8)
     private BigDecimal triggerPrice;
 
     @Enumerated(EnumType.STRING)
     private TriggerOrderStatus status;
 
     private LocalDateTime triggeredAt;
+    private Long resultingOrderId;
+    private String rejectionReason;
 
     protected TriggerOrder() {
     }
@@ -98,5 +104,21 @@ public class TriggerOrder extends BaseEntity {
 
     public void setTriggeredAt(LocalDateTime triggeredAt) {
         this.triggeredAt = triggeredAt;
+    }
+
+    public Long getResultingOrderId() {
+        return resultingOrderId;
+    }
+
+    public void setResultingOrderId(Long resultingOrderId) {
+        this.resultingOrderId = resultingOrderId;
+    }
+
+    public String getRejectionReason() {
+        return rejectionReason;
+    }
+
+    public void setRejectionReason(String rejectionReason) {
+        this.rejectionReason = rejectionReason;
     }
 }
