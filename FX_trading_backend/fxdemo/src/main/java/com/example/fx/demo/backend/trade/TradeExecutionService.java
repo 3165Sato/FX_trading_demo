@@ -28,10 +28,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -39,6 +42,7 @@ public class TradeExecutionService {
 
     private static final int DEFAULT_LIMIT = 50;
     private static final int MAX_LIMIT = 200;
+    private static final Logger log = LoggerFactory.getLogger(TradeExecutionService.class);
 
     private final AccountRepository accountRepository;
     private final CurrencyPairRepository currencyPairRepository;
@@ -80,7 +84,6 @@ public class TradeExecutionService {
         );
     }
 
-    @Transactional
     public List<OrderResultResponse> liquidateAllPositionsIfMarginRatioAtOrBelow(BigDecimal threshold) {
         return accountTradeLockService.withAccountLock(
                 DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
@@ -157,11 +160,19 @@ public class TradeExecutionService {
             return List.of();
         }
 
-        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
-        List<OrderResultResponse> results = new java.util.ArrayList<>();
+        List<OrderResultResponse> results = new ArrayList<>();
         for (PositionResponse position : positionService.getPositions(null)) {
-            results.add(positionService.closePositionForLockedAccount(position.id(), OrderSource.LOSS_CUT).execution());
+            try {
+                // ロスカットは個別決済ルートを再利用し、注文・約定のsourceにLOSS_CUTを残す。
+                results.add(positionService.closePositionForLockedAccount(position.id(), OrderSource.LOSS_CUT).execution());
+            } catch (ResponseStatusException exception) {
+                // 一部通貨ペアのレート欠損などでは、決済できる建玉を優先して次回評価で再判定する。
+                log.warn(
+                        "Loss cut skipped position {} because it could not be closed: {}",
+                        position.id(),
+                        exception.getReason()
+                );
+            }
         }
         return results;
     }
