@@ -10,6 +10,9 @@ public record TradeSummaryResponse(
         String side,
         BigDecimal quantity,
         BigDecimal price,
-        LocalDateTime executedAt
+        LocalDateTime executedAt,
+        String tradeKind,
+        Long positionId,
+        BigDecimal realizedPnl
 ) {
 }

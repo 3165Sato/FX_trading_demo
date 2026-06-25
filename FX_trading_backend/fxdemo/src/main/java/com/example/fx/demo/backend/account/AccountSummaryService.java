@@ -51,10 +51,10 @@ public class AccountSummaryService {
 
         Map<String, BigDecimal> midRates = loadMidRates();
         List<PositionResponse> positions = positionService.getPositions(null);
-        PnlSummaryResponse pnlSummary = positionService.getPnlSummary();
-
-        BigDecimal realizedPnl = sumToJpy(pnlSummary.realizedByCurrency(), midRates);
-        BigDecimal balance = realizedPnl == null ? null : baseBalance(account).add(realizedPnl);
+        BigDecimal realizedPnl = account.getRealizedPnl() == null
+                ? BigDecimal.ZERO
+                : scaleJpy(account.getRealizedPnl());
+        BigDecimal balance = baseBalance(account);
         BigDecimal unrealizedPnl = sumUnrealizedPnl(positions, midRates);
         BigDecimal usedMargin = sumUsedMargin(positions);
         BigDecimal equity = addNullable(balance, unrealizedPnl);
@@ -77,27 +77,15 @@ public class AccountSummaryService {
         );
     }
 
-    private BigDecimal sumToJpy(Map<String, BigDecimal> values, Map<String, BigDecimal> midRates) {
-        BigDecimal total = BigDecimal.ZERO;
-        for (Map.Entry<String, BigDecimal> entry : values.entrySet()) {
-            BigDecimal converted = currencyConverter.toJpy(entry.getValue(), entry.getKey(), midRates);
-            if (converted == null) {
-                return null;
-            }
-            total = total.add(converted);
-        }
-        return scaleJpy(total);
-    }
-
     private BigDecimal sumUnrealizedPnl(List<PositionResponse> positions, Map<String, BigDecimal> midRates) {
         BigDecimal total = BigDecimal.ZERO;
         for (PositionResponse position : positions) {
             if (position.unrealizedPnl() == null) {
-                return null;
+                continue;
             }
             BigDecimal converted = currencyConverter.toJpy(position.unrealizedPnl(), position.quoteCurrency(), midRates);
             if (converted == null) {
-                return null;
+                continue;
             }
             total = total.add(converted);
         }
@@ -108,7 +96,7 @@ public class AccountSummaryService {
         BigDecimal total = BigDecimal.ZERO;
         for (PositionResponse position : positions) {
             if (position.requiredMargin() == null) {
-                return null;
+                continue;
             }
             total = total.add(position.requiredMargin());
         }

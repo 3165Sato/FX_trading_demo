@@ -26,6 +26,7 @@ class PositionValuationCalculator {
         BigDecimal currentPrice = currentPrice(position, bid, ask);
         BigDecimal unrealizedPnl = calculateUnrealizedPnl(position, currentPrice, scale);
         return new PositionResponse(
+                null,
                 position.currencyPair(),
                 position.side(),
                 position.quantity(),
@@ -34,7 +35,8 @@ class PositionValuationCalculator {
                 currentPrice,
                 unrealizedPnl,
                 position.updatedAt(),
-                requiredMargin
+                requiredMargin,
+                position.updatedAt()
         );
     }
 

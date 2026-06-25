@@ -1,8 +1,11 @@
 package com.example.fx.demo.backend.position;
 
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
+import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,5 +32,10 @@ public class PositionController {
     @GetMapping("/pnl/summary")
     public PnlSummaryResponse getPnlSummary() {
         return positionService.getPnlSummary();
+    }
+
+    @PostMapping("/positions/{id}/close")
+    public PositionCloseResponse closePosition(@PathVariable Long id) {
+        return positionService.closePosition(id);
     }
 }

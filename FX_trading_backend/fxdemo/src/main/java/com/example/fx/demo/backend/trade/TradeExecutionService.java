@@ -8,6 +8,8 @@ import com.example.fx.demo.backend.common.enums.OrderSide;
 import com.example.fx.demo.backend.common.enums.OrderSource;
 import com.example.fx.demo.backend.common.enums.OrderStatus;
 import com.example.fx.demo.backend.common.enums.OrderType;
+import com.example.fx.demo.backend.common.enums.PositionSide;
+import com.example.fx.demo.backend.common.enums.TradeKind;
 import com.example.fx.demo.backend.market.CurrencyPair;
 import com.example.fx.demo.backend.market.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.MarketRate;
@@ -30,7 +32,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -158,31 +159,9 @@ public class TradeExecutionService {
 
         Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
-        List<OrderResultResponse> results = new ArrayList<>();
+        List<OrderResultResponse> results = new java.util.ArrayList<>();
         for (PositionResponse position : positionService.getPositions(null)) {
-            CurrencyPair currencyPair = currencyPairRepository.findBySymbol(position.currencyPair())
-                    .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.NOT_FOUND,
-                            "Currency pair not found: " + position.currencyPair()
-                    ));
-            MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
-                    .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.CONFLICT,
-                            "Latest market rate is not available: " + currencyPair.getSymbol()
-                    ));
-            OrderSide liquidationSide = "LONG".equals(position.side()) ? OrderSide.SELL : OrderSide.BUY;
-            BigDecimal quantity = position.quantity().setScale(currencyPair.getQuantityScale(), RoundingMode.HALF_UP);
-            BigDecimal executionPrice = executionPrice(liquidationSide, marketRate)
-                    .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
-            results.add(executeMarketOrder(
-                    account,
-                    currencyPair,
-                    liquidationSide,
-                    quantity,
-                    executionPrice,
-                    OrderType.MARKET,
-                    OrderSource.LOSS_CUT
-            ));
+            results.add(positionService.closePositionForLockedAccount(position.id(), OrderSource.LOSS_CUT).execution());
         }
         return results;
     }
@@ -220,7 +199,21 @@ public class TradeExecutionService {
         trade.setQuantity(quantity);
         trade.setExecutionPrice(executionPrice);
         trade.setExecutedAt(now);
+        trade.setTradeKind(TradeKind.OPEN);
         Trade savedTrade = tradeRepository.save(trade);
+
+        PositionSide positionSide = side == OrderSide.BUY ? PositionSide.LONG : PositionSide.SHORT;
+        var position = positionService.openPosition(
+                account,
+                currencyPair,
+                positionSide,
+                quantity,
+                executionPrice,
+                savedTrade.getId(),
+                now
+        );
+        savedTrade.setPositionId(position.getId());
+        savedTrade = tradeRepository.save(savedTrade);
 
         return new OrderResultResponse(toOrderResponse(savedOrder), toTradeResponse(savedTrade));
     }
@@ -293,7 +286,10 @@ public class TradeExecutionService {
                 trade.getSide().name(),
                 trade.getQuantity(),
                 trade.getExecutionPrice(),
-                trade.getExecutedAt()
+                trade.getExecutedAt(),
+                trade.getTradeKind() == null ? TradeKind.OPEN.name() : trade.getTradeKind().name(),
+                trade.getPositionId(),
+                trade.getRealizedPnl()
         );
     }
 }

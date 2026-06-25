@@ -40,6 +40,24 @@ public class OrderSchemaInitializer implements CommandLineRunner {
                 "source",
                 "'MANUAL', 'LOSS_CUT', 'TRIGGER'"
         );
+        recreateCheckConstraint(
+                "positions",
+                "positions_status_check",
+                "status",
+                "'OPEN', 'CLOSED'"
+        );
+        recreateCheckConstraint(
+                "positions",
+                "positions_side_check",
+                "side",
+                "'BUY', 'SELL', 'LONG', 'SHORT'"
+        );
+        recreateCheckConstraint(
+                "trades",
+                "trades_trade_kind_check",
+                "trade_kind",
+                "'OPEN', 'CLOSE'"
+        );
     }
 
     private void recreateCheckConstraint(

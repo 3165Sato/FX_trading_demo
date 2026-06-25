@@ -73,6 +73,9 @@ export type TradeSummary = {
   quantity: number;
   price: number;
   executedAt: string;
+  tradeKind?: "OPEN" | "CLOSE";
+  positionId?: number | null;
+  realizedPnl?: number | null;
 };
 
 export type OrderSummary = {
@@ -106,6 +109,7 @@ export type PendingOrder = {
 };
 
 export type PositionSummary = {
+  id: number;
   currencyPair: string;
   side: "LONG" | "SHORT";
   quantity: number;
@@ -115,6 +119,19 @@ export type PositionSummary = {
   unrealizedPnl: number | null;
   updatedAt: string;
   requiredMargin: number | null;
+  openedAt: string | null;
+};
+
+export type PositionCloseResult = {
+  positionId: number;
+  currencyPair: string;
+  side: "LONG" | "SHORT";
+  quantity: number;
+  closePrice: number;
+  realizedPnl: number;
+  realizedCurrency: string;
+  closedAt: string;
+  execution: OrderResult;
 };
 
 export type PnlSummary = {
@@ -143,15 +160,17 @@ const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
 
 function getApiBaseUrl(): string {
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
 
-  if (!apiBaseUrl) {
-    throw new Error(
-      "NEXT_PUBLIC_API_BASE_URL is not configured. Check .env.local.",
-    );
+  if (apiBaseUrl && apiBaseUrl.toLowerCase() !== "auto") {
+    return apiBaseUrl.replace(/\/$/, "");
   }
 
-  return apiBaseUrl.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8080`;
+  }
+
+  throw new Error("NEXT_PUBLIC_API_BASE_URL is not configured. Check .env.local.");
 }
 
 export async function fetchMarketRateTicks(
@@ -325,6 +344,12 @@ export async function fetchPositions(
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions${query ? `?${query}` : ""}`;
 
   return fetchWithRetry<PositionSummary[]>(requestUrl);
+}
+
+export async function closePosition(id: number): Promise<PositionCloseResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${id}/close`;
+
+  return fetchWithRetry<PositionCloseResult>(requestUrl, { method: "POST" });
 }
 
 export async function fetchPnlSummary(): Promise<PnlSummary> {

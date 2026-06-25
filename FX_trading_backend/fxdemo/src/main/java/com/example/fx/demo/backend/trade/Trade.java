@@ -2,6 +2,7 @@ package com.example.fx.demo.backend.trade;
 
 import com.example.fx.demo.backend.common.entity.BaseEntity;
 import com.example.fx.demo.backend.common.enums.OrderSide;
+import com.example.fx.demo.backend.common.enums.TradeKind;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -27,9 +28,18 @@ public class Trade extends BaseEntity {
 
     @Column(precision = 19, scale = 8)
     private BigDecimal executionPrice;
+
+    @Enumerated(EnumType.STRING)
+    private TradeKind tradeKind = TradeKind.OPEN;
+
+    private Long positionId;
+
+    @Column(precision = 19, scale = 8)
+    private BigDecimal realizedPnl;
+
     private LocalDateTime executedAt;
 
-    protected Trade() {
+    public Trade() {
     }
 
     public Long getOrderId() {
@@ -78,6 +88,30 @@ public class Trade extends BaseEntity {
 
     public void setExecutionPrice(BigDecimal executionPrice) {
         this.executionPrice = executionPrice;
+    }
+
+    public TradeKind getTradeKind() {
+        return tradeKind;
+    }
+
+    public void setTradeKind(TradeKind tradeKind) {
+        this.tradeKind = tradeKind;
+    }
+
+    public Long getPositionId() {
+        return positionId;
+    }
+
+    public void setPositionId(Long positionId) {
+        this.positionId = positionId;
+    }
+
+    public BigDecimal getRealizedPnl() {
+        return realizedPnl;
+    }
+
+    public void setRealizedPnl(BigDecimal realizedPnl) {
+        this.realizedPnl = realizedPnl;
     }
 
     public LocalDateTime getExecutedAt() {

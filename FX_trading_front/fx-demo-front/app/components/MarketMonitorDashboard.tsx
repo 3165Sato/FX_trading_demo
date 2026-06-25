@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   cancelPendingOrder,
+  closePosition,
   fetchAccountSummary,
   fetchLatestMarketRates,
   fetchMarketAlerts,
@@ -92,6 +93,7 @@ export function MarketMonitorDashboard() {
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [submittingOrderSide, setSubmittingOrderSide] = useState<OrderSide | null>(null);
   const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
+  const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
   const previousRatesRef = useRef<Map<string, number>>(new Map());
 
@@ -503,6 +505,29 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const closeSelectedPosition = async (id: number) => {
+    setClosingPositionId(id);
+    try {
+      const result = await closePosition(id);
+      setLastOrderMessage(
+        `CLOSE ${formatQuantity(result.quantity)} ${result.currencyPair} @ ${formatPrice(result.closePrice, result.currencyPair)}`,
+      );
+      setPositions((current) => current.filter((position) => position.id !== id));
+      setTrades((current) => [result.execution.trade, ...current].slice(0, TRADE_LIMIT));
+      setOrders((current) => [result.execution.order, ...current].slice(0, ORDER_LIMIT));
+      setOrderError(null);
+      void loadTrades();
+      void loadOrders();
+      void loadPositions();
+      void loadPnlSummary();
+      void loadAccountSummary();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setClosingPositionId(null);
+    }
+  };
+
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-[#0d1117] text-[#e6edf3]">
       <AppHeader
@@ -561,11 +586,13 @@ export function MarketMonitorDashboard() {
             trades={trades}
             triggerPrice={triggerPrice}
             onCancelPendingOrder={cancelSelectedPendingOrder}
+            onClosePosition={closeSelectedPosition}
             onQuantityChange={setOrderQuantity}
             onOrderTypeChange={setOrderType}
             onSelectPair={selectTradingCurrencyPair}
             onSubmitOrder={submitMarketOrder}
             onTriggerPriceChange={setTriggerPrice}
+            closingPositionId={closingPositionId}
           />
         )}
       </div>
@@ -769,6 +796,7 @@ function TradingScreen({
   accountSummary,
   activePair,
   cancelingPendingOrderId,
+  closingPositionId,
   orderError,
   orderQuantity,
   orderType,
@@ -783,6 +811,7 @@ function TradingScreen({
   trades,
   triggerPrice,
   onCancelPendingOrder,
+  onClosePosition,
   onQuantityChange,
   onOrderTypeChange,
   onSelectPair,
@@ -792,6 +821,7 @@ function TradingScreen({
   accountSummary: AccountSummary | null;
   activePair: string;
   cancelingPendingOrderId: number | null;
+  closingPositionId: number | null;
   orderError: string | null;
   orderQuantity: string;
   orderType: OrderType;
@@ -806,6 +836,7 @@ function TradingScreen({
   trades: TradeSummary[];
   triggerPrice: string;
   onCancelPendingOrder: (id: number) => void;
+  onClosePosition: (id: number) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSelectPair: (currencyPair: string) => void;
@@ -849,7 +880,11 @@ function TradingScreen({
             orders={pendingOrders}
             onCancel={onCancelPendingOrder}
           />
-          <PositionsTable positions={positions} />
+          <PositionsTable
+            closingPositionId={closingPositionId}
+            positions={positions}
+            onClose={onClosePosition}
+          />
           <PnlSummaryPanel accountSummary={accountSummary} summary={pnlSummary} />
         </div>
       </div>
@@ -1528,50 +1563,77 @@ function PendingOrderRow({
   );
 }
 
-function PositionsTable({ positions }: { positions: PositionSummary[] }) {
+function PositionsTable({
+  closingPositionId,
+  positions,
+  onClose,
+}: {
+  closingPositionId: number | null;
+  positions: PositionSummary[];
+  onClose: (id: number) => void;
+}) {
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Positions" meta={`${positions.length} open`} />
-      <div className="grid grid-cols-7 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-[72px_1fr_72px_1fr_1fr_1fr_1fr_88px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+        <span>ID</span>
         <span>Pair</span>
         <span>Side</span>
         <span className="text-right">Units</span>
-        <span className="text-right">Avg Price</span>
+        <span className="text-right">Open</span>
         <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
-        <span className="text-right">Margin</span>
+        <span className="text-right">Action</span>
       </div>
       <div className="max-h-[260px] overflow-y-auto">
         {positions.length === 0 ? (
           <div className="px-4 py-12 text-center text-sm text-[#768390]">No open positions</div>
         ) : (
-          positions.map((position) => <PositionRow key={position.currencyPair} position={position} />)
+          positions.map((position) => (
+            <PositionRow
+              key={position.id}
+              closing={closingPositionId === position.id}
+              position={position}
+              onClose={onClose}
+            />
+          ))
         )}
       </div>
     </section>
   );
 }
 
-function PositionRow({ position }: { position: PositionSummary }) {
+function PositionRow({
+  closing,
+  position,
+  onClose,
+}: {
+  closing: boolean;
+  position: PositionSummary;
+  onClose: (id: number) => void;
+}) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
-  const pnlClass = pnlToneClass(position.unrealizedPnl);
   return (
-    <div className="grid grid-cols-7 gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+    <div className="grid grid-cols-[72px_1fr_72px_1fr_1fr_1fr_1fr_88px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+      <span className="text-[#768390]">#{position.id}</span>
       <span className="text-[#e6edf3]">{position.currencyPair}</span>
       <span className={sideClass}>{position.side}</span>
       <span className="text-right text-[#adbac7]">{formatQuantity(position.quantity)}</span>
       <span className="text-right text-[#adbac7]">
         {formatPrice(position.averagePrice, position.currencyPair)}
       </span>
-      <span className="text-right text-[#adbac7]">
-        {position.currentPrice === null ? "--" : formatPrice(position.currentPrice, position.currencyPair)}
+      <span className="text-right text-[#768390]">--</span>
+      <span className="text-right text-[#768390]">--</span>
+      <span className="text-right">
+        <button
+          type="button"
+          className="border border-[#f85149]/70 px-2 py-1 text-[10px] uppercase text-[#f85149] transition-colors hover:bg-[#f85149]/10 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={closing}
+          onClick={() => onClose(position.id)}
+        >
+          {closing ? "Closing" : "Close"}
+        </button>
       </span>
-      <span className={`text-right ${pnlClass}`}>
-        {position.unrealizedPnl === null
-          ? "--"
-          : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
-      </span>
-      <span className="text-right text-[#adbac7]">{formatOptionalJpy(position.requiredMargin)}</span>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 public record PositionResponse(
+        Long id,
         String currencyPair,
         String side,
         BigDecimal quantity,
@@ -12,6 +13,7 @@ public record PositionResponse(
         BigDecimal currentPrice,
         BigDecimal unrealizedPnl,
         LocalDateTime updatedAt,
-        BigDecimal requiredMargin
+        BigDecimal requiredMargin,
+        LocalDateTime openedAt
 ) {
 }
