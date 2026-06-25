@@ -14,8 +14,11 @@ import com.example.fx.demo.backend.market.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.MarketRate;
 import com.example.fx.demo.backend.market.MarketRateRepository;
 import com.example.fx.demo.backend.margin.CurrencyConverter;
+import com.example.fx.demo.backend.margin.MarginAggregationPolicy;
 import com.example.fx.demo.backend.margin.MarginRule;
 import com.example.fx.demo.backend.margin.MarginRuleRepository;
+import com.example.fx.demo.backend.margin.MarginProperties;
+import com.example.fx.demo.backend.margin.MarginRateEvaluationPolicy;
 import com.example.fx.demo.backend.order.FxOrder;
 import com.example.fx.demo.backend.order.FxOrderRepository;
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
@@ -36,6 +39,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +57,9 @@ public class PositionService {
     private final CurrencyPairRepository currencyPairRepository;
     private final CurrencyConverter currencyConverter;
     private final FxOrderRepository fxOrderRepository;
+    private final List<MarginAggregationPolicy> marginAggregationPolicies;
+    private final MarginProperties marginProperties;
+    private final List<MarginRateEvaluationPolicy> marginRateEvaluationPolicies;
     private final MarginRuleRepository marginRuleRepository;
     private final MarketRateRepository marketRateRepository;
     private final PositionRepository positionRepository;
@@ -64,6 +71,9 @@ public class PositionService {
             CurrencyPairRepository currencyPairRepository,
             CurrencyConverter currencyConverter,
             FxOrderRepository fxOrderRepository,
+            List<MarginAggregationPolicy> marginAggregationPolicies,
+            MarginProperties marginProperties,
+            List<MarginRateEvaluationPolicy> marginRateEvaluationPolicies,
             MarginRuleRepository marginRuleRepository,
             MarketRateRepository marketRateRepository,
             PositionRepository positionRepository,
@@ -74,6 +84,9 @@ public class PositionService {
         this.currencyPairRepository = currencyPairRepository;
         this.currencyConverter = currencyConverter;
         this.fxOrderRepository = fxOrderRepository;
+        this.marginAggregationPolicies = marginAggregationPolicies;
+        this.marginProperties = marginProperties;
+        this.marginRateEvaluationPolicies = marginRateEvaluationPolicies;
         this.marginRuleRepository = marginRuleRepository;
         this.marketRateRepository = marketRateRepository;
         this.positionRepository = positionRepository;
@@ -91,8 +104,17 @@ public class PositionService {
                         PositionStatus.OPEN
                 );
         Map<String, CurrencyPairScale> scales = loadScales();
+        Map<String, MarketRate> rates = loadRates();
+        Map<String, BigDecimal> midRates = loadMidRates(rates);
+        Map<String, BigDecimal> leverageByPair = loadMarginRules();
         return positions.stream()
-                .map(position -> toResponse(position, scales.get(position.getCurrencyPair())))
+                .map(position -> toResponse(
+                        position,
+                        scales.get(position.getCurrencyPair()),
+                        rates.get(position.getCurrencyPair()),
+                        leverageByPair.getOrDefault(position.getCurrencyPair(), DEFAULT_LEVERAGE),
+                        midRates
+                ))
                 .toList();
     }
 
@@ -103,8 +125,26 @@ public class PositionService {
         if (account.getRealizedPnl() != null && account.getRealizedPnl().signum() != 0) {
             realizedByCurrency.put("JPY", account.getRealizedPnl().setScale(0, RoundingMode.HALF_UP));
         }
-        // 1aでは建玉ベースの未実現損益集計は作り込まず、画面上は未評価として扱う。
-        return new PnlSummaryResponse(Map.of(), realizedByCurrency);
+        Map<String, CurrencyPairScale> scales = loadScales();
+        Map<String, MarketRate> rates = loadRates();
+        Map<String, BigDecimal> unrealizedByCurrency = new TreeMap<>();
+
+        for (Position position : positionRepository.findByAccountIdAndStatusOrderByOpenedAtAsc(
+                account.getId(),
+                PositionStatus.OPEN
+        )) {
+            CurrencyPairScale scale = scales.get(position.getCurrencyPair());
+            BigDecimal unrealizedPnl = calculateUnrealizedPnl(position, rates.get(position.getCurrencyPair()), scale);
+            if (unrealizedPnl == null) {
+                continue;
+            }
+            String quoteCurrency = scale == null ? null : scale.quoteCurrency();
+            if (quoteCurrency != null) {
+                unrealizedByCurrency.merge(quoteCurrency, unrealizedPnl, BigDecimal::add);
+            }
+        }
+
+        return new PnlSummaryResponse(unrealizedByCurrency, realizedByCurrency);
     }
 
     @Transactional(readOnly = true)
@@ -120,8 +160,17 @@ public class PositionService {
                 PositionStatus.OPEN
         );
 
-        BigDecimal usedMargin = calculateUsedMargin(positions);
-        BigDecimal additionalMargin = calculateRequiredMargin(currencyPair, quantity, executionPrice);
+        Map<String, MarketRate> rates = loadRates();
+        Map<String, BigDecimal> midRates = loadMidRates(rates);
+        Map<String, BigDecimal> leverageByPair = loadMarginRules();
+        BigDecimal usedMargin = calculateUsedMargin(positions, rates, leverageByPair, midRates);
+        BigDecimal additionalMargin = calculateRequiredMargin(
+                currencyPair,
+                quantity,
+                executionPrice,
+                leverageByPair.getOrDefault(currencyPair, DEFAULT_LEVERAGE),
+                midRates
+        );
         if (usedMargin == null || additionalMargin == null) {
             return null;
         }
@@ -290,37 +339,76 @@ public class PositionService {
         return position.getOpenPrice().subtract(closePrice).multiply(position.getQuantity());
     }
 
-    private BigDecimal calculateUsedMargin(List<Position> positions) {
-        BigDecimal total = BigDecimal.ZERO;
+    private BigDecimal calculateUsedMargin(
+            List<Position> positions,
+            Map<String, MarketRate> rates,
+            Map<String, BigDecimal> leverageByPair,
+            Map<String, BigDecimal> midRates
+    ) {
+        List<BigDecimal> requiredMargins = new ArrayList<>();
         for (Position position : positions) {
             BigDecimal margin = calculateRequiredMargin(
-                    position.getCurrencyPair(),
-                    position.getQuantity(),
-                    position.getOpenPrice()
+                    position,
+                    rates.get(position.getCurrencyPair()),
+                    leverageByPair.getOrDefault(position.getCurrencyPair(), DEFAULT_LEVERAGE),
+                    midRates
             );
             if (margin == null) {
                 return null;
             }
-            total = total.add(margin);
+            requiredMargins.add(margin);
         }
-        return total.setScale(0, RoundingMode.HALF_UP);
+        return marginAggregationPolicy().aggregate(requiredMargins).setScale(0, RoundingMode.HALF_UP);
     }
 
     private BigDecimal calculateRequiredMargin(String currencyPair, BigDecimal quantity, BigDecimal price) {
+        return calculateRequiredMargin(currencyPair, quantity, price, loadMarginRules().getOrDefault(currencyPair, DEFAULT_LEVERAGE), loadMidRates(loadRates()));
+    }
+
+    private BigDecimal calculateRequiredMargin(
+            String currencyPair,
+            BigDecimal quantity,
+            BigDecimal price,
+            BigDecimal leverage,
+            Map<String, BigDecimal> midRates
+    ) {
         CurrencyPair pair = currencyPairRepository.findBySymbol(currencyPair).orElse(null);
         if (pair == null || quantity == null || price == null) {
             return null;
         }
-        BigDecimal leverage = loadMarginRules().getOrDefault(currencyPair, DEFAULT_LEVERAGE);
         if (leverage.compareTo(BigDecimal.ZERO) <= 0) {
             return null;
         }
         BigDecimal requiredMarginQuote = quantity.multiply(price).divide(leverage, MARGIN_SCALE, RoundingMode.HALF_UP);
-        return currencyConverter.toJpy(requiredMarginQuote, pair.getQuoteCurrency(), loadMidRates());
+        return currencyConverter.toJpy(requiredMarginQuote, pair.getQuoteCurrency(), midRates);
     }
 
-    private PositionResponse toResponse(Position position, CurrencyPairScale scale) {
+    private BigDecimal calculateRequiredMargin(
+            Position position,
+            MarketRate marketRate,
+            BigDecimal leverage,
+            Map<String, BigDecimal> midRates
+    ) {
+        return calculateRequiredMargin(
+                position.getCurrencyPair(),
+                position.getQuantity(),
+                marginRateEvaluationPolicy().evaluateRate(position, marketRate),
+                leverage,
+                midRates
+        );
+    }
+
+    private PositionResponse toResponse(
+            Position position,
+            CurrencyPairScale scale,
+            MarketRate marketRate,
+            BigDecimal leverage,
+            Map<String, BigDecimal> midRates
+    ) {
         BigDecimal openPrice = position.getOpenPrice() == null ? position.getAvgPrice() : position.getOpenPrice();
+        BigDecimal currentPrice = currentPrice(position, marketRate);
+        BigDecimal unrealizedPnl = calculateUnrealizedPnl(position, marketRate, scale);
+        BigDecimal requiredMargin = calculateRequiredMargin(position, marketRate, leverage, midRates);
         return new PositionResponse(
                 position.getId(),
                 position.getCurrencyPair(),
@@ -328,12 +416,31 @@ public class PositionService {
                 position.getQuantity(),
                 openPrice,
                 scale == null ? null : scale.quoteCurrency(),
-                null,
-                null,
+                currentPrice,
+                unrealizedPnl,
                 position.getUpdatedAt(),
-                null,
+                requiredMargin,
                 position.getOpenedAt()
         );
+    }
+
+    private BigDecimal calculateUnrealizedPnl(Position position, MarketRate marketRate, CurrencyPairScale scale) {
+        BigDecimal currentPrice = currentPrice(position, marketRate);
+        BigDecimal openPrice = position.getOpenPrice() == null ? position.getAvgPrice() : position.getOpenPrice();
+        if (currentPrice == null || openPrice == null || scale == null) {
+            return null;
+        }
+        BigDecimal pnl = position.getSide() == PositionSide.LONG
+                ? currentPrice.subtract(openPrice).multiply(position.getQuantity())
+                : openPrice.subtract(currentPrice).multiply(position.getQuantity());
+        return pnl.setScale(scale.priceScale(), RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal currentPrice(Position position, MarketRate marketRate) {
+        if (marketRate == null) {
+            return null;
+        }
+        return position.getSide() == PositionSide.LONG ? marketRate.getBid() : marketRate.getAsk();
     }
 
     private Account defaultAccount() {
@@ -372,12 +479,47 @@ public class PositionService {
                 ));
     }
 
-    private Map<String, BigDecimal> loadMidRates() {
+    private Map<String, MarketRate> loadRates() {
         return marketRateRepository.findByCurrencyPair_EnabledTrue().stream()
                 .collect(Collectors.toMap(
                         rate -> rate.getCurrencyPair().getSymbol(),
-                        MarketRate::getMidPrice,
+                        rate -> rate,
                         (first, ignored) -> first
+                ));
+    }
+
+    private Map<String, BigDecimal> loadMidRates() {
+        return loadMidRates(loadRates());
+    }
+
+    private Map<String, BigDecimal> loadMidRates(Map<String, MarketRate> rates) {
+        return rates.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        entry -> entry.getValue().getMidPrice(),
+                        (first, ignored) -> first
+                ));
+    }
+
+    private MarginRateEvaluationPolicy marginRateEvaluationPolicy() {
+        String configured = marginProperties.getEvaluation().getRatePolicy();
+        return marginRateEvaluationPolicies.stream()
+                .filter(policy -> policy.name().equalsIgnoreCase(configured))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Unsupported margin rate policy: " + configured
+                ));
+    }
+
+    private MarginAggregationPolicy marginAggregationPolicy() {
+        String configured = marginProperties.getEvaluation().getAggregationPolicy();
+        return marginAggregationPolicies.stream()
+                .filter(policy -> policy.name().equalsIgnoreCase(configured))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Unsupported margin aggregation policy: " + configured
                 ));
     }
 

@@ -81,11 +81,11 @@ public class AccountSummaryService {
         BigDecimal total = BigDecimal.ZERO;
         for (PositionResponse position : positions) {
             if (position.unrealizedPnl() == null) {
-                continue;
+                return null;
             }
             BigDecimal converted = currencyConverter.toJpy(position.unrealizedPnl(), position.quoteCurrency(), midRates);
             if (converted == null) {
-                continue;
+                return null;
             }
             total = total.add(converted);
         }
@@ -96,7 +96,7 @@ public class AccountSummaryService {
         BigDecimal total = BigDecimal.ZERO;
         for (PositionResponse position : positions) {
             if (position.requiredMargin() == null) {
-                continue;
+                return null;
             }
             total = total.add(position.requiredMargin());
         }

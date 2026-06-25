@@ -11,6 +11,7 @@ public class MarginProperties {
 
     private LossCut lossCut = new LossCut();
     private Order order = new Order();
+    private Evaluation evaluation = new Evaluation();
 
     public LossCut getLossCut() {
         return lossCut;
@@ -26,6 +27,14 @@ public class MarginProperties {
 
     public void setOrder(Order order) {
         this.order = order;
+    }
+
+    public Evaluation getEvaluation() {
+        return evaluation;
+    }
+
+    public void setEvaluation(Evaluation evaluation) {
+        this.evaluation = evaluation;
     }
 
     public static class LossCut {
@@ -89,6 +98,27 @@ public class MarginProperties {
 
         public void setMarginCheckEnabled(boolean marginCheckEnabled) {
             this.marginCheckEnabled = marginCheckEnabled;
+        }
+    }
+
+    public static class Evaluation {
+        private String ratePolicy = "FIXED";
+        private String aggregationPolicy = "SUM";
+
+        public String getRatePolicy() {
+            return ratePolicy;
+        }
+
+        public void setRatePolicy(String ratePolicy) {
+            this.ratePolicy = ratePolicy;
+        }
+
+        public String getAggregationPolicy() {
+            return aggregationPolicy;
+        }
+
+        public void setAggregationPolicy(String aggregationPolicy) {
+            this.aggregationPolicy = aggregationPolicy;
         }
     }
 }

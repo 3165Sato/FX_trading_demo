@@ -1575,7 +1575,7 @@ function PositionsTable({
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Positions" meta={`${positions.length} open`} />
-      <div className="grid grid-cols-[72px_1fr_72px_1fr_1fr_1fr_1fr_88px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-[56px_76px_62px_1fr_1fr_1fr_1fr_1fr_78px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>ID</span>
         <span>Pair</span>
         <span>Side</span>
@@ -1583,6 +1583,7 @@ function PositionsTable({
         <span className="text-right">Open</span>
         <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
+        <span className="text-right">Margin</span>
         <span className="text-right">Action</span>
       </div>
       <div className="max-h-[260px] overflow-y-auto">
@@ -1613,8 +1614,9 @@ function PositionRow({
   onClose: (id: number) => void;
 }) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
+  const pnlClass = pnlToneClass(position.unrealizedPnl);
   return (
-    <div className="grid grid-cols-[72px_1fr_72px_1fr_1fr_1fr_1fr_88px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+    <div className="grid grid-cols-[56px_76px_62px_1fr_1fr_1fr_1fr_1fr_78px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
       <span className="text-[#768390]">#{position.id}</span>
       <span className="text-[#e6edf3]">{position.currencyPair}</span>
       <span className={sideClass}>{position.side}</span>
@@ -1622,8 +1624,15 @@ function PositionRow({
       <span className="text-right text-[#adbac7]">
         {formatPrice(position.averagePrice, position.currencyPair)}
       </span>
-      <span className="text-right text-[#768390]">--</span>
-      <span className="text-right text-[#768390]">--</span>
+      <span className="text-right text-[#adbac7]">
+        {position.currentPrice === null ? "--" : formatPrice(position.currentPrice, position.currencyPair)}
+      </span>
+      <span className={`text-right ${pnlClass}`}>
+        {position.unrealizedPnl === null
+          ? "--"
+          : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
+      </span>
+      <span className="text-right text-[#adbac7]">{formatOptionalJpy(position.requiredMargin)}</span>
       <span className="text-right">
         <button
           type="button"
