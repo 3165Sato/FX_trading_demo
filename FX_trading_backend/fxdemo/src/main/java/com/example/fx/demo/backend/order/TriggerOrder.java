@@ -1,8 +1,10 @@
 package com.example.fx.demo.backend.order;
 
 import com.example.fx.demo.backend.common.entity.BaseEntity;
+import com.example.fx.demo.backend.common.enums.ExitOrderType;
 import com.example.fx.demo.backend.common.enums.OrderSide;
 import com.example.fx.demo.backend.common.enums.OrderType;
+import com.example.fx.demo.backend.common.enums.TriggerOrderPurpose;
 import com.example.fx.demo.backend.common.enums.TriggerOrderStatus;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -38,6 +40,13 @@ public class TriggerOrder extends BaseEntity {
     private LocalDateTime triggeredAt;
     private Long resultingOrderId;
     private String rejectionReason;
+    private Long targetPositionId;
+
+    @Enumerated(EnumType.STRING)
+    private TriggerOrderPurpose purpose;
+
+    @Enumerated(EnumType.STRING)
+    private ExitOrderType exitType;
 
     protected TriggerOrder() {
     }
@@ -120,5 +129,29 @@ public class TriggerOrder extends BaseEntity {
 
     public void setRejectionReason(String rejectionReason) {
         this.rejectionReason = rejectionReason;
+    }
+
+    public Long getTargetPositionId() {
+        return targetPositionId;
+    }
+
+    public void setTargetPositionId(Long targetPositionId) {
+        this.targetPositionId = targetPositionId;
+    }
+
+    public TriggerOrderPurpose getPurpose() {
+        return purpose;
+    }
+
+    public void setPurpose(TriggerOrderPurpose purpose) {
+        this.purpose = purpose;
+    }
+
+    public ExitOrderType getExitType() {
+        return exitType;
+    }
+
+    public void setExitType(ExitOrderType exitType) {
+        this.exitType = exitType;
     }
 }

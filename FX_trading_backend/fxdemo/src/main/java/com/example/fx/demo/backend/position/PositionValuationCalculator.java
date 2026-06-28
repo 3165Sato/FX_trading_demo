@@ -4,6 +4,7 @@ import com.example.fx.demo.backend.position.dto.PositionResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 
 class PositionValuationCalculator {
 
@@ -36,7 +37,8 @@ class PositionValuationCalculator {
                 unrealizedPnl,
                 position.updatedAt(),
                 requiredMargin,
-                position.updatedAt()
+                position.updatedAt(),
+                List.of()
         );
     }
 

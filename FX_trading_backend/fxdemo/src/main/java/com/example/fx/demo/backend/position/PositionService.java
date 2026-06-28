@@ -2,6 +2,7 @@ package com.example.fx.demo.backend.position;
 
 import com.example.fx.demo.backend.account.Account;
 import com.example.fx.demo.backend.account.AccountRepository;
+import com.example.fx.demo.backend.common.enums.ExitOrderType;
 import com.example.fx.demo.backend.common.enums.OrderSide;
 import com.example.fx.demo.backend.common.enums.OrderSource;
 import com.example.fx.demo.backend.common.enums.OrderStatus;
@@ -9,6 +10,8 @@ import com.example.fx.demo.backend.common.enums.OrderType;
 import com.example.fx.demo.backend.common.enums.PositionSide;
 import com.example.fx.demo.backend.common.enums.PositionStatus;
 import com.example.fx.demo.backend.common.enums.TradeKind;
+import com.example.fx.demo.backend.common.enums.TriggerOrderPurpose;
+import com.example.fx.demo.backend.common.enums.TriggerOrderStatus;
 import com.example.fx.demo.backend.market.CurrencyPair;
 import com.example.fx.demo.backend.market.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.MarketRate;
@@ -21,8 +24,11 @@ import com.example.fx.demo.backend.margin.MarginProperties;
 import com.example.fx.demo.backend.margin.MarginRateEvaluationPolicy;
 import com.example.fx.demo.backend.order.FxOrder;
 import com.example.fx.demo.backend.order.FxOrderRepository;
+import com.example.fx.demo.backend.order.TriggerOrder;
+import com.example.fx.demo.backend.order.TriggerOrderRepository;
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
+import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
 import com.example.fx.demo.backend.trade.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.DemoTradingAccountInitializer;
@@ -64,6 +70,7 @@ public class PositionService {
     private final MarketRateRepository marketRateRepository;
     private final PositionRepository positionRepository;
     private final TradeRepository tradeRepository;
+    private final TriggerOrderRepository triggerOrderRepository;
 
     public PositionService(
             AccountRepository accountRepository,
@@ -77,7 +84,8 @@ public class PositionService {
             MarginRuleRepository marginRuleRepository,
             MarketRateRepository marketRateRepository,
             PositionRepository positionRepository,
-            TradeRepository tradeRepository
+            TradeRepository tradeRepository,
+            TriggerOrderRepository triggerOrderRepository
     ) {
         this.accountRepository = accountRepository;
         this.accountTradeLockService = accountTradeLockService;
@@ -91,6 +99,7 @@ public class PositionService {
         this.marketRateRepository = marketRateRepository;
         this.positionRepository = positionRepository;
         this.tradeRepository = tradeRepository;
+        this.triggerOrderRepository = triggerOrderRepository;
     }
 
     @Transactional(readOnly = true)
@@ -107,13 +116,15 @@ public class PositionService {
         Map<String, MarketRate> rates = loadRates();
         Map<String, BigDecimal> midRates = loadMidRates(rates);
         Map<String, BigDecimal> leverageByPair = loadMarginRules();
+        Map<Long, List<PositionExitOrderResponse>> exitOrdersByPosition = loadExitOrders(positions);
         return positions.stream()
                 .map(position -> toResponse(
                         position,
                         scales.get(position.getCurrencyPair()),
                         rates.get(position.getCurrencyPair()),
                         leverageByPair.getOrDefault(position.getCurrencyPair(), DEFAULT_LEVERAGE),
-                        midRates
+                        midRates,
+                        exitOrdersByPosition.getOrDefault(position.getId(), List.of())
                 ))
                 .toList();
     }
@@ -211,6 +222,11 @@ public class PositionService {
 
     @Transactional
     public PositionCloseResponse closePositionForLockedAccount(Long id, OrderSource source) {
+        return closePositionForLockedAccount(id, source, null);
+    }
+
+    @Transactional
+    public PositionCloseResponse closePositionForLockedAccount(Long id, OrderSource source, BigDecimal requestedClosePrice) {
         Account account = defaultAccount();
         Position position = positionRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "建玉が見つかりません: " + id));
@@ -235,8 +251,14 @@ public class PositionService {
 
         LocalDateTime now = LocalDateTime.now();
         OrderSide closeSide = closeSide(position.getSide());
-        BigDecimal closePrice = executionPrice(closeSide, marketRate)
+        BigDecimal rawClosePrice = requestedClosePrice == null
+                ? executionPrice(closeSide, marketRate)
+                : requestedClosePrice;
+        BigDecimal closePrice = rawClosePrice
                 .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        if (closePrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "決済価格は0より大きい値を指定してください。");
+        }
         BigDecimal realizedPnl = calculateRealizedPnl(position, closePrice)
                 .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
 
@@ -259,6 +281,7 @@ public class PositionService {
         Position savedPosition = positionRepository.save(position);
 
         reflectRealizedPnl(account, realizedPnl, currencyPair.getQuoteCurrency());
+        expirePendingExitOrders(savedPosition.getId());
 
         return new PositionCloseResponse(
                 savedPosition.getId(),
@@ -403,7 +426,8 @@ public class PositionService {
             CurrencyPairScale scale,
             MarketRate marketRate,
             BigDecimal leverage,
-            Map<String, BigDecimal> midRates
+            Map<String, BigDecimal> midRates,
+            List<PositionExitOrderResponse> exitOrders
     ) {
         BigDecimal openPrice = position.getOpenPrice() == null ? position.getAvgPrice() : position.getOpenPrice();
         BigDecimal currentPrice = currentPrice(position, marketRate);
@@ -420,7 +444,55 @@ public class PositionService {
                 unrealizedPnl,
                 position.getUpdatedAt(),
                 requiredMargin,
-                position.getOpenedAt()
+                position.getOpenedAt(),
+                exitOrders
+        );
+    }
+
+    private Map<Long, List<PositionExitOrderResponse>> loadExitOrders(List<Position> positions) {
+        List<Long> positionIds = positions.stream()
+                .map(Position::getId)
+                .toList();
+        if (positionIds.isEmpty()) {
+            return Map.of();
+        }
+        return triggerOrderRepository.findByTargetPositionIdInAndPurposeOrderByCreatedAtAsc(
+                        positionIds,
+                        TriggerOrderPurpose.EXIT
+                ).stream()
+                .collect(Collectors.groupingBy(
+                        TriggerOrder::getTargetPositionId,
+                        LinkedHashMap::new,
+                        Collectors.mapping(this::toExitOrderResponse, Collectors.toList())
+                ));
+    }
+
+    private void expirePendingExitOrders(Long positionId) {
+        List<TriggerOrder> exitOrders = triggerOrderRepository.findByTargetPositionIdAndPurposeAndStatusInOrderByCreatedAtAsc(
+                positionId,
+                TriggerOrderPurpose.EXIT,
+                pendingTriggerStatuses()
+        );
+        for (TriggerOrder exitOrder : exitOrders) {
+            exitOrder.setStatus(TriggerOrderStatus.EXPIRED);
+            exitOrder.setRejectionReason("対象建玉が決済されたため、未発動の決済注文を失効しました。");
+        }
+        triggerOrderRepository.saveAll(exitOrders);
+    }
+
+    private List<TriggerOrderStatus> pendingTriggerStatuses() {
+        return List.of(TriggerOrderStatus.PENDING, TriggerOrderStatus.WAITING);
+    }
+
+    private PositionExitOrderResponse toExitOrderResponse(TriggerOrder order) {
+        ExitOrderType exitType = order.getExitType();
+        return new PositionExitOrderResponse(
+                order.getId(),
+                exitType == null ? null : exitType.name(),
+                order.getTriggerPrice(),
+                order.getStatus().name(),
+                order.getCreatedAt(),
+                order.getTriggeredAt()
         );
     }
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  cancelPositionExitOrder,
   cancelPendingOrder,
   closePosition,
   fetchAccountSummary,
@@ -16,11 +17,13 @@ import {
   fetchTrades,
   fetchNewsEvents,
   getSpreadStats,
+  placePositionExitOrder,
   placePendingOrder,
   placeMarketOrder,
   triggerNewsEvent,
   type AccountSummary,
   type AlertSeverity,
+  type ExitOrderType,
   type MarketAlert,
   type MarketRate,
   type MarketRateTick,
@@ -94,6 +97,9 @@ export function MarketMonitorDashboard() {
   const [submittingOrderSide, setSubmittingOrderSide] = useState<OrderSide | null>(null);
   const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
   const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
+  const [exitOrderDrafts, setExitOrderDrafts] = useState<Record<number, Partial<Record<ExitOrderType, string>>>>({});
+  const [submittingExitOrder, setSubmittingExitOrder] = useState<{ positionId: number; type: ExitOrderType } | null>(null);
+  const [cancelingExitOrderId, setCancelingExitOrderId] = useState<number | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
   const previousRatesRef = useRef<Map<string, number>>(new Map());
 
@@ -528,6 +534,59 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const updateExitOrderDraft = (positionId: number, type: ExitOrderType, value: string) => {
+    setExitOrderDrafts((current) => ({
+      ...current,
+      [positionId]: {
+        ...current[positionId],
+        [type]: value,
+      },
+    }));
+  };
+
+  const submitPositionExitOrder = async (position: PositionSummary, type: ExitOrderType) => {
+    const triggerPrice = Number(exitOrderDrafts[position.id]?.[type]);
+    if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) {
+      setOrderError(`${type} price must be greater than zero.`);
+      return;
+    }
+
+    setSubmittingExitOrder({ positionId: position.id, type });
+    try {
+      const exitOrder = await placePositionExitOrder(position.id, type, triggerPrice);
+      setLastOrderMessage(
+        `${type} set for #${position.id} ${position.currencyPair} @ ${formatPrice(exitOrder.triggerPrice, position.currencyPair)}`,
+      );
+      setExitOrderDrafts((current) => ({
+        ...current,
+        [position.id]: {
+          ...current[position.id],
+          [type]: "",
+        },
+      }));
+      setOrderError(null);
+      void loadPositions();
+      void loadPendingOrders();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setSubmittingExitOrder(null);
+    }
+  };
+
+  const cancelSelectedExitOrder = async (positionId: number, exitOrderId: number) => {
+    setCancelingExitOrderId(exitOrderId);
+    try {
+      await cancelPositionExitOrder(positionId, exitOrderId);
+      setOrderError(null);
+      void loadPositions();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setCancelingExitOrderId(null);
+    }
+  };
+
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-[#0d1117] text-[#e6edf3]">
       <AppHeader
@@ -571,7 +630,9 @@ export function MarketMonitorDashboard() {
           <TradingScreen
             accountSummary={accountSummary}
             activePair={tradingActivePair}
+            cancelingExitOrderId={cancelingExitOrderId}
             cancelingPendingOrderId={cancelingPendingOrderId}
+            exitOrderDrafts={exitOrderDrafts}
             orderError={orderError}
             orderQuantity={orderQuantity}
             orderType={orderType}
@@ -585,12 +646,16 @@ export function MarketMonitorDashboard() {
             lastOrderMessage={lastOrderMessage}
             trades={trades}
             triggerPrice={triggerPrice}
+            submittingExitOrder={submittingExitOrder}
             onCancelPendingOrder={cancelSelectedPendingOrder}
+            onCancelExitOrder={cancelSelectedExitOrder}
             onClosePosition={closeSelectedPosition}
+            onExitOrderDraftChange={updateExitOrderDraft}
             onQuantityChange={setOrderQuantity}
             onOrderTypeChange={setOrderType}
             onSelectPair={selectTradingCurrencyPair}
             onSubmitOrder={submitMarketOrder}
+            onSubmitExitOrder={submitPositionExitOrder}
             onTriggerPriceChange={setTriggerPrice}
             closingPositionId={closingPositionId}
           />
@@ -795,8 +860,10 @@ function MonitorScreen({
 function TradingScreen({
   accountSummary,
   activePair,
+  cancelingExitOrderId,
   cancelingPendingOrderId,
   closingPositionId,
+  exitOrderDrafts,
   orderError,
   orderQuantity,
   orderType,
@@ -810,18 +877,24 @@ function TradingScreen({
   lastOrderMessage,
   trades,
   triggerPrice,
+  submittingExitOrder,
+  onCancelExitOrder,
   onCancelPendingOrder,
   onClosePosition,
+  onExitOrderDraftChange,
   onQuantityChange,
   onOrderTypeChange,
   onSelectPair,
   onSubmitOrder,
+  onSubmitExitOrder,
   onTriggerPriceChange,
 }: {
   accountSummary: AccountSummary | null;
   activePair: string;
+  cancelingExitOrderId: number | null;
   cancelingPendingOrderId: number | null;
   closingPositionId: number | null;
+  exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
   orderError: string | null;
   orderQuantity: string;
   orderType: OrderType;
@@ -835,12 +908,16 @@ function TradingScreen({
   lastOrderMessage: string | null;
   trades: TradeSummary[];
   triggerPrice: string;
+  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
+  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelPendingOrder: (id: number) => void;
   onClosePosition: (id: number) => void;
+  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSelectPair: (currencyPair: string) => void;
   onSubmitOrder: (side: OrderSide) => void;
+  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
   return (
@@ -881,9 +958,15 @@ function TradingScreen({
             onCancel={onCancelPendingOrder}
           />
           <PositionsTable
+            cancelingExitOrderId={cancelingExitOrderId}
             closingPositionId={closingPositionId}
+            exitOrderDrafts={exitOrderDrafts}
             positions={positions}
+            submittingExitOrder={submittingExitOrder}
+            onCancelExitOrder={onCancelExitOrder}
             onClose={onClosePosition}
+            onExitOrderDraftChange={onExitOrderDraftChange}
+            onSubmitExitOrder={onSubmitExitOrder}
           />
           <PnlSummaryPanel accountSummary={accountSummary} summary={pnlSummary} />
         </div>
@@ -1564,18 +1647,30 @@ function PendingOrderRow({
 }
 
 function PositionsTable({
+  cancelingExitOrderId,
   closingPositionId,
+  exitOrderDrafts,
   positions,
+  submittingExitOrder,
+  onCancelExitOrder,
   onClose,
+  onExitOrderDraftChange,
+  onSubmitExitOrder,
 }: {
+  cancelingExitOrderId: number | null;
   closingPositionId: number | null;
+  exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
   positions: PositionSummary[];
+  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
+  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onClose: (id: number) => void;
+  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
 }) {
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Positions" meta={`${positions.length} open`} />
-      <div className="grid grid-cols-[56px_76px_62px_1fr_1fr_1fr_1fr_1fr_78px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-[44px_72px_58px_1fr_1fr_1fr_1fr_1fr_168px_74px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>ID</span>
         <span>Pair</span>
         <span>Side</span>
@@ -1584,6 +1679,7 @@ function PositionsTable({
         <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
         <span className="text-right">Margin</span>
+        <span className="text-center">TP / SL</span>
         <span className="text-right">Action</span>
       </div>
       <div className="max-h-[260px] overflow-y-auto">
@@ -1593,9 +1689,15 @@ function PositionsTable({
           positions.map((position) => (
             <PositionRow
               key={position.id}
+              cancelingExitOrderId={cancelingExitOrderId}
               closing={closingPositionId === position.id}
+              drafts={exitOrderDrafts[position.id] ?? {}}
               position={position}
+              submittingExitOrder={submittingExitOrder}
+              onCancelExitOrder={onCancelExitOrder}
               onClose={onClose}
+              onExitOrderDraftChange={onExitOrderDraftChange}
+              onSubmitExitOrder={onSubmitExitOrder}
             />
           ))
         )}
@@ -1605,18 +1707,32 @@ function PositionsTable({
 }
 
 function PositionRow({
+  cancelingExitOrderId,
   closing,
+  drafts,
   position,
+  submittingExitOrder,
+  onCancelExitOrder,
   onClose,
+  onExitOrderDraftChange,
+  onSubmitExitOrder,
 }: {
+  cancelingExitOrderId: number | null;
   closing: boolean;
+  drafts: Partial<Record<ExitOrderType, string>>;
   position: PositionSummary;
+  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
+  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onClose: (id: number) => void;
+  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
 }) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
   const pnlClass = pnlToneClass(position.unrealizedPnl);
+  const tpOrder = findPositionExitOrder(position, "TP");
+  const slOrder = findPositionExitOrder(position, "SL");
   return (
-    <div className="grid grid-cols-[56px_76px_62px_1fr_1fr_1fr_1fr_1fr_78px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
+    <div className="grid grid-cols-[44px_72px_58px_1fr_1fr_1fr_1fr_1fr_168px_74px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
       <span className="text-[#768390]">#{position.id}</span>
       <span className="text-[#e6edf3]">{position.currencyPair}</span>
       <span className={sideClass}>{position.side}</span>
@@ -1633,6 +1749,30 @@ function PositionRow({
           : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
       </span>
       <span className="text-right text-[#adbac7]">{formatOptionalJpy(position.requiredMargin)}</span>
+      <div className="grid gap-1">
+        <ExitOrderControl
+          canceling={cancelingExitOrderId === tpOrder?.id}
+          draftValue={drafts.TP ?? ""}
+          order={tpOrder}
+          position={position}
+          submitting={submittingExitOrder?.positionId === position.id && submittingExitOrder.type === "TP"}
+          type="TP"
+          onCancel={onCancelExitOrder}
+          onChange={onExitOrderDraftChange}
+          onSubmit={onSubmitExitOrder}
+        />
+        <ExitOrderControl
+          canceling={cancelingExitOrderId === slOrder?.id}
+          draftValue={drafts.SL ?? ""}
+          order={slOrder}
+          position={position}
+          submitting={submittingExitOrder?.positionId === position.id && submittingExitOrder.type === "SL"}
+          type="SL"
+          onCancel={onCancelExitOrder}
+          onChange={onExitOrderDraftChange}
+          onSubmit={onSubmitExitOrder}
+        />
+      </div>
       <span className="text-right">
         <button
           type="button"
@@ -1645,6 +1785,90 @@ function PositionRow({
       </span>
     </div>
   );
+}
+
+function ExitOrderControl({
+  canceling,
+  draftValue,
+  order,
+  position,
+  submitting,
+  type,
+  onCancel,
+  onChange,
+  onSubmit,
+}: {
+  canceling: boolean;
+  draftValue: string;
+  order?: PositionSummary["exitOrders"][number];
+  position: PositionSummary;
+  submitting: boolean;
+  type: ExitOrderType;
+  onCancel: (positionId: number, exitOrderId: number) => void;
+  onChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onSubmit: (position: PositionSummary, type: ExitOrderType) => void;
+}) {
+  const labelClass = type === "TP" ? "text-[#3fb950]" : "text-[#f85149]";
+
+  if (order) {
+    return (
+      <div className="grid grid-cols-[22px_minmax(0,1fr)_42px] items-center gap-1">
+        <span className={`text-[10px] ${labelClass}`}>{type}</span>
+        <span className="truncate text-right text-[#adbac7]">
+          {formatPrice(order.triggerPrice, position.currencyPair)}
+        </span>
+        <button
+          type="button"
+          disabled={canceling}
+          onClick={() => onCancel(position.id, order.id)}
+          className="border border-[#262d38] px-1.5 py-0.5 text-[9px] uppercase text-[#768390] hover:bg-[#21272f] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {canceling ? "..." : "Off"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-[22px_minmax(0,1fr)_42px] items-center gap-1">
+      <span className={`text-[10px] ${labelClass}`}>{type}</span>
+      <input
+        aria-label={`${type} price for position ${position.id}`}
+        value={draftValue}
+        onChange={(event) => onChange(position.id, type, event.target.value)}
+        placeholder={exitOrderPlaceholder(position, type)}
+        className="min-w-0 border border-[#262d38] bg-[#0d1117] px-1.5 py-0.5 text-right text-[10px] text-[#adbac7] outline-none focus:border-[#58a6ff]"
+      />
+      <button
+        type="button"
+        disabled={submitting}
+        onClick={() => onSubmit(position, type)}
+        className="border border-[#58a6ff]/50 px-1.5 py-0.5 text-[9px] uppercase text-[#58a6ff] hover:bg-[#58a6ff]/10 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {submitting ? "..." : "Set"}
+      </button>
+    </div>
+  );
+}
+
+function findPositionExitOrder(position: PositionSummary, type: ExitOrderType) {
+  return position.exitOrders.find(
+    (order) =>
+      order.type === type &&
+      (order.status === "PENDING" || order.status === "WAITING"),
+  );
+}
+
+function exitOrderPlaceholder(position: PositionSummary, type: ExitOrderType) {
+  const currentPrice = position.currentPrice ?? position.averagePrice;
+  if (position.side === "LONG") {
+    return type === "TP"
+      ? `>${formatPrice(currentPrice, position.currencyPair)}`
+      : `<${formatPrice(currentPrice, position.currencyPair)}`;
+  }
+  return type === "TP"
+    ? `<${formatPrice(currentPrice, position.currencyPair)}`
+    : `>${formatPrice(currentPrice, position.currencyPair)}`;
 }
 
 function PnlSummaryPanel({

@@ -64,6 +64,7 @@ export type MarketAlert = {
 export type OrderSide = "BUY" | "SELL";
 export type OrderType = "MARKET" | "LIMIT" | "STOP";
 export type PendingOrderStatus = "PENDING" | "WAITING" | "TRIGGERED" | "CANCELED" | "CANCELLED" | "REJECTED" | "EXPIRED";
+export type ExitOrderType = "TP" | "SL";
 
 export type TradeSummary = {
   id: number;
@@ -108,6 +109,15 @@ export type PendingOrder = {
   rejectionReason: string | null;
 };
 
+export type PositionExitOrder = {
+  id: number;
+  type: ExitOrderType | null;
+  triggerPrice: number;
+  status: PendingOrderStatus;
+  createdAt: string;
+  triggeredAt: string | null;
+};
+
 export type PositionSummary = {
   id: number;
   currencyPair: string;
@@ -120,6 +130,7 @@ export type PositionSummary = {
   updatedAt: string;
   requiredMargin: number | null;
   openedAt: string | null;
+  exitOrders: PositionExitOrder[];
 };
 
 export type PositionCloseResult = {
@@ -350,6 +361,31 @@ export async function closePosition(id: number): Promise<PositionCloseResult> {
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${id}/close`;
 
   return fetchWithRetry<PositionCloseResult>(requestUrl, { method: "POST" });
+}
+
+export async function placePositionExitOrder(
+  positionId: number,
+  type: ExitOrderType,
+  triggerPrice: number,
+): Promise<PositionExitOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/exit-orders`;
+
+  return fetchWithRetry<PositionExitOrder>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      type,
+      triggerPrice,
+    }),
+  });
+}
+
+export async function cancelPositionExitOrder(
+  positionId: number,
+  exitOrderId: number,
+): Promise<PositionExitOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/exit-orders/${exitOrderId}`;
+
+  return fetchWithRetry<PositionExitOrder>(requestUrl, { method: "DELETE" });
 }
 
 export async function fetchPnlSummary(): Promise<PnlSummary> {

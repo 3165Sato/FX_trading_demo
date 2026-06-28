@@ -145,7 +145,8 @@ class TradeExecutionServiceLossCutTest {
                 new BigDecimal("-100"),
                 LocalDateTime.of(2026, 6, 26, 12, 0),
                 new BigDecimal("6200"),
-                LocalDateTime.of(2026, 6, 26, 11, 0)
+                LocalDateTime.of(2026, 6, 26, 11, 0),
+                List.of()
         );
     }
 

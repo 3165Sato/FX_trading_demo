@@ -2,8 +2,13 @@ package com.example.fx.demo.backend.order;
 
 import com.example.fx.demo.backend.account.Account;
 import com.example.fx.demo.backend.account.AccountRepository;
+import com.example.fx.demo.backend.common.enums.ExitOrderType;
 import com.example.fx.demo.backend.common.enums.OrderSide;
+import com.example.fx.demo.backend.common.enums.OrderSource;
 import com.example.fx.demo.backend.common.enums.OrderType;
+import com.example.fx.demo.backend.common.enums.PositionSide;
+import com.example.fx.demo.backend.common.enums.PositionStatus;
+import com.example.fx.demo.backend.common.enums.TriggerOrderPurpose;
 import com.example.fx.demo.backend.common.enums.TriggerOrderStatus;
 import com.example.fx.demo.backend.market.CurrencyPair;
 import com.example.fx.demo.backend.market.CurrencyPairRepository;
@@ -11,6 +16,11 @@ import com.example.fx.demo.backend.market.MarketRate;
 import com.example.fx.demo.backend.market.MarketRateRepository;
 import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
+import com.example.fx.demo.backend.position.Position;
+import com.example.fx.demo.backend.position.PositionRepository;
+import com.example.fx.demo.backend.position.PositionService;
+import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.trade.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.DemoTradingAccountInitializer;
 import com.example.fx.demo.backend.trade.TradeExecutionService;
@@ -36,6 +46,8 @@ public class TriggerOrderService {
     private final AccountTradeLockService accountTradeLockService;
     private final CurrencyPairRepository currencyPairRepository;
     private final MarketRateRepository marketRateRepository;
+    private final PositionRepository positionRepository;
+    private final PositionService positionService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerOrderRepository triggerOrderRepository;
 
@@ -44,6 +56,8 @@ public class TriggerOrderService {
             AccountTradeLockService accountTradeLockService,
             CurrencyPairRepository currencyPairRepository,
             MarketRateRepository marketRateRepository,
+            PositionRepository positionRepository,
+            PositionService positionService,
             TradeExecutionService tradeExecutionService,
             TriggerOrderRepository triggerOrderRepository
     ) {
@@ -51,6 +65,8 @@ public class TriggerOrderService {
         this.accountTradeLockService = accountTradeLockService;
         this.currencyPairRepository = currencyPairRepository;
         this.marketRateRepository = marketRateRepository;
+        this.positionRepository = positionRepository;
+        this.positionService = positionService;
         this.tradeExecutionService = tradeExecutionService;
         this.triggerOrderRepository = triggerOrderRepository;
     }
@@ -84,6 +100,7 @@ public class TriggerOrderService {
         order.setQuantity(quantity);
         order.setTriggerPrice(triggerPrice);
         order.setStatus(TriggerOrderStatus.PENDING);
+        order.setPurpose(TriggerOrderPurpose.ENTRY);
         return toResponse(triggerOrderRepository.save(order));
     }
 
@@ -96,6 +113,89 @@ public class TriggerOrderService {
         }
         order.setStatus(TriggerOrderStatus.CANCELLED);
         return toResponse(triggerOrderRepository.save(order));
+    }
+
+    @Transactional
+    public PositionExitOrderResponse placeExitOrder(Long positionId, PositionExitOrderRequest request) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> placeExitOrderLocked(positionId, request)
+        );
+    }
+
+    @Transactional
+    public PositionExitOrderResponse cancelExitOrder(Long positionId, Long exitOrderId) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> cancelExitOrderLocked(positionId, exitOrderId)
+        );
+    }
+
+    private PositionExitOrderResponse placeExitOrderLocked(Long positionId, PositionExitOrderRequest request) {
+        if (request.type() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "決済注文の種類をTPまたはSLで指定してください。");
+        }
+        if (request.triggerPrice() == null || request.triggerPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "決済注文価格は0より大きい値を指定してください。");
+        }
+
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        Position position = positionRepository.findById(positionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "対象建玉が見つかりません: " + positionId));
+        if (!account.getId().equals(position.getAccountId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "対象建玉が見つかりません: " + positionId);
+        }
+        if (position.getStatus() != PositionStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "OPEN状態の建玉にのみ決済注文を設定できます。");
+        }
+        if (triggerOrderRepository.existsByTargetPositionIdAndExitTypeAndStatusIn(
+                positionId,
+                request.type(),
+                pendingStatuses()
+        )) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, request.type().name() + "はこの建玉にすでに設定されています。");
+        }
+
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(position.getCurrencyPair())
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Currency pair not found: " + position.getCurrencyPair()
+                ));
+        MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Latest market rate is not available: " + currencyPair.getSymbol()
+                ));
+        BigDecimal triggerPrice = request.triggerPrice().setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        validateExitDirection(position, request.type(), triggerPrice, marketRate);
+
+        TriggerOrder order = new TriggerOrder();
+        order.setAccountId(account.getId());
+        order.setCurrencyPair(currencyPair.getSymbol());
+        order.setSide(closeSide(position.getSide()));
+        order.setOrderType(request.type() == ExitOrderType.TP ? OrderType.LIMIT : OrderType.STOP);
+        order.setQuantity(position.getQuantity());
+        order.setTriggerPrice(triggerPrice);
+        order.setStatus(TriggerOrderStatus.PENDING);
+        order.setPurpose(TriggerOrderPurpose.EXIT);
+        order.setExitType(request.type());
+        order.setTargetPositionId(position.getId());
+        return toExitOrderResponse(triggerOrderRepository.save(order));
+    }
+
+    private PositionExitOrderResponse cancelExitOrderLocked(Long positionId, Long exitOrderId) {
+        TriggerOrder order = triggerOrderRepository.findById(exitOrderId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "決済注文が見つかりません: " + exitOrderId));
+        if (order.getPurpose() != TriggerOrderPurpose.EXIT || !positionId.equals(order.getTargetPositionId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "決済注文が見つかりません: " + exitOrderId);
+        }
+        if (order.getStatus() != TriggerOrderStatus.PENDING && order.getStatus() != TriggerOrderStatus.WAITING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "未発動の決済注文のみ取消できます。");
+        }
+        order.setStatus(TriggerOrderStatus.CANCELLED);
+        return toExitOrderResponse(triggerOrderRepository.save(order));
     }
 
     @Transactional(readOnly = true)
@@ -112,7 +212,10 @@ public class TriggerOrderService {
         } else {
             orders = triggerOrderRepository.findAllByOrderByCreatedAtDesc(page);
         }
-        return orders.stream().map(this::toResponse).toList();
+        return orders.stream()
+                .filter(this::isEntryOrder)
+                .map(this::toResponse)
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -139,6 +242,10 @@ public class TriggerOrderService {
     private void evaluatePendingOrderLocked(Long id) {
         TriggerOrder order = triggerOrderRepository.findById(id).orElse(null);
         if (order == null || (order.getStatus() != TriggerOrderStatus.PENDING && order.getStatus() != TriggerOrderStatus.WAITING)) {
+            return;
+        }
+        if (order.getPurpose() == TriggerOrderPurpose.EXIT) {
+            evaluateExitOrderLocked(order);
             return;
         }
         CurrencyPair currencyPair = currencyPairRepository.findBySymbol(order.getCurrencyPair())
@@ -169,8 +276,53 @@ public class TriggerOrderService {
         }
     }
 
+    private void evaluateExitOrderLocked(TriggerOrder order) {
+        Position position = order.getTargetPositionId() == null
+                ? null
+                : positionRepository.findById(order.getTargetPositionId()).orElse(null);
+        if (position == null || position.getStatus() != PositionStatus.OPEN) {
+            expire(order, "対象建玉が決済済みのため、決済注文を失効しました。");
+            return;
+        }
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(order.getCurrencyPair())
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElse(null);
+        if (currencyPair == null) {
+            reject(order, "Currency pair is no longer available");
+            return;
+        }
+        MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair).orElse(null);
+        if (marketRate == null || !isExitTriggered(order, position, marketRate)) {
+            return;
+        }
+
+        try {
+            BigDecimal closePrice = order.getExitType() == ExitOrderType.TP
+                    ? order.getTriggerPrice()
+                    : exitReferencePrice(position, marketRate);
+            var result = positionService.closePositionForLockedAccount(
+                    position.getId(),
+                    OrderSource.TRIGGER,
+                    closePrice
+            );
+            order.setStatus(TriggerOrderStatus.TRIGGERED);
+            order.setTriggeredAt(LocalDateTime.now());
+            order.setResultingOrderId(result.execution().order().id());
+            triggerOrderRepository.save(order);
+        } catch (ResponseStatusException exception) {
+            reject(order, exception.getReason() == null ? "Exit order execution rejected" : exception.getReason());
+        }
+    }
+
     private void reject(TriggerOrder order, String reason) {
         order.setStatus(TriggerOrderStatus.REJECTED);
+        order.setTriggeredAt(LocalDateTime.now());
+        order.setRejectionReason(reason);
+        triggerOrderRepository.save(order);
+    }
+
+    private void expire(TriggerOrder order, String reason) {
+        order.setStatus(TriggerOrderStatus.EXPIRED);
         order.setTriggeredAt(LocalDateTime.now());
         order.setRejectionReason(reason);
         triggerOrderRepository.save(order);
@@ -190,6 +342,68 @@ public class TriggerOrderService {
                     : price.compareTo(order.getTriggerPrice()) <= 0;
             case MARKET -> false;
         };
+    }
+
+    private boolean isExitTriggered(TriggerOrder order, Position position, MarketRate marketRate) {
+        BigDecimal price = exitReferencePrice(position, marketRate);
+        if (price == null || order.getExitType() == null) {
+            return false;
+        }
+        if (position.getSide() == PositionSide.LONG) {
+            return order.getExitType() == ExitOrderType.TP
+                    ? price.compareTo(order.getTriggerPrice()) >= 0
+                    : price.compareTo(order.getTriggerPrice()) <= 0;
+        }
+        return order.getExitType() == ExitOrderType.TP
+                ? price.compareTo(order.getTriggerPrice()) <= 0
+                : price.compareTo(order.getTriggerPrice()) >= 0;
+    }
+
+    private void validateExitDirection(
+            Position position,
+            ExitOrderType type,
+            BigDecimal triggerPrice,
+            MarketRate marketRate
+    ) {
+        BigDecimal referencePrice = exitReferencePrice(position, marketRate);
+        boolean valid;
+        if (position.getSide() == PositionSide.LONG) {
+            valid = type == ExitOrderType.TP
+                    ? triggerPrice.compareTo(referencePrice) > 0
+                    : triggerPrice.compareTo(referencePrice) < 0;
+        } else {
+            valid = type == ExitOrderType.TP
+                    ? triggerPrice.compareTo(referencePrice) < 0
+                    : triggerPrice.compareTo(referencePrice) > 0;
+        }
+        if (!valid) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    buildInvalidExitPriceMessage(position, type, referencePrice)
+            );
+        }
+    }
+
+    private String buildInvalidExitPriceMessage(Position position, ExitOrderType type, BigDecimal referencePrice) {
+        String sideLabel = position.getSide() == PositionSide.LONG ? "LONG建玉" : "SHORT建玉";
+        String referenceLabel = position.getSide() == PositionSide.LONG ? "Bid" : "Ask";
+        String direction;
+        if (position.getSide() == PositionSide.LONG) {
+            direction = type == ExitOrderType.TP ? "現在Bidより高い価格" : "現在Bidより低い価格";
+        } else {
+            direction = type == ExitOrderType.TP ? "現在Askより低い価格" : "現在Askより高い価格";
+        }
+        return sideLabel + "の" + type.name()
+                + "価格の向きが不正です。現在の" + referenceLabel + "（" + referencePrice
+                + "）に対して、" + direction + "を指定してください。";
+    }
+
+    private BigDecimal exitReferencePrice(Position position, MarketRate marketRate) {
+        return position.getSide() == PositionSide.LONG ? marketRate.getBid() : marketRate.getAsk();
+    }
+
+    private OrderSide closeSide(PositionSide side) {
+        return side == PositionSide.LONG ? OrderSide.SELL : OrderSide.BUY;
     }
 
     private void validateBasicRequest(PendingOrderRequest request) {
@@ -252,6 +466,14 @@ public class TriggerOrderService {
         return side == OrderSide.BUY ? marketRate.getAsk() : marketRate.getBid();
     }
 
+    private boolean isEntryOrder(TriggerOrder order) {
+        return order.getPurpose() == null || order.getPurpose() == TriggerOrderPurpose.ENTRY;
+    }
+
+    private List<TriggerOrderStatus> pendingStatuses() {
+        return List.of(TriggerOrderStatus.PENDING, TriggerOrderStatus.WAITING);
+    }
+
     private TriggerOrderStatus parseStatus(String status) {
         if (status == null || status.isBlank()) {
             return TriggerOrderStatus.PENDING;
@@ -286,6 +508,18 @@ public class TriggerOrderService {
                 order.getTriggeredAt(),
                 order.getResultingOrderId(),
                 order.getRejectionReason()
+        );
+    }
+
+    private PositionExitOrderResponse toExitOrderResponse(TriggerOrder order) {
+        ExitOrderType exitType = order.getExitType();
+        return new PositionExitOrderResponse(
+                order.getId(),
+                exitType == null ? null : exitType.name(),
+                order.getTriggerPrice(),
+                order.getStatus().name(),
+                order.getCreatedAt(),
+                order.getTriggeredAt()
         );
     }
 }

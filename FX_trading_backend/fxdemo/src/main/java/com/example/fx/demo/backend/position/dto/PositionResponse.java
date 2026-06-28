@@ -2,6 +2,7 @@ package com.example.fx.demo.backend.position.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record PositionResponse(
         Long id,
@@ -14,6 +15,7 @@ public record PositionResponse(
         BigDecimal unrealizedPnl,
         LocalDateTime updatedAt,
         BigDecimal requiredMargin,
-        LocalDateTime openedAt
+        LocalDateTime openedAt,
+        List<PositionExitOrderResponse> exitOrders
 ) {
 }
