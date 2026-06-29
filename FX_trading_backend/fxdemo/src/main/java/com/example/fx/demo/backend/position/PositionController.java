@@ -5,6 +5,8 @@ import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
+import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionOcoOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -60,5 +62,21 @@ public class PositionController {
             @PathVariable Long exitId
     ) {
         return triggerOrderService.cancelExitOrder(id, exitId);
+    }
+
+    @PostMapping("/positions/{id}/oco-orders")
+    public PositionOcoOrderResponse placeOcoOrder(
+            @PathVariable Long id,
+            @RequestBody PositionOcoOrderRequest request
+    ) {
+        return triggerOrderService.placeOcoOrder(id, request);
+    }
+
+    @DeleteMapping("/positions/{id}/oco-orders/{groupId}")
+    public PositionOcoOrderResponse cancelOcoOrder(
+            @PathVariable Long id,
+            @PathVariable String groupId
+    ) {
+        return triggerOrderService.cancelOcoOrder(id, groupId);
     }
 }

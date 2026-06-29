@@ -491,6 +491,7 @@ public class PositionService {
                 exitType == null ? null : exitType.name(),
                 order.getTriggerPrice(),
                 order.getStatus().name(),
+                order.getOcoGroupId(),
                 order.getCreatedAt(),
                 order.getTriggeredAt()
         );

@@ -114,8 +114,14 @@ export type PositionExitOrder = {
   type: ExitOrderType | null;
   triggerPrice: number;
   status: PendingOrderStatus;
+  ocoGroupId: string | null;
   createdAt: string;
   triggeredAt: string | null;
+};
+
+export type PositionOcoOrder = {
+  ocoGroupId: string;
+  orders: PositionExitOrder[];
 };
 
 export type PositionSummary = {
@@ -386,6 +392,31 @@ export async function cancelPositionExitOrder(
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/exit-orders/${exitOrderId}`;
 
   return fetchWithRetry<PositionExitOrder>(requestUrl, { method: "DELETE" });
+}
+
+export async function placePositionOcoOrder(
+  positionId: number,
+  tpTriggerPrice: number,
+  slTriggerPrice: number,
+): Promise<PositionOcoOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/oco-orders`;
+
+  return fetchWithRetry<PositionOcoOrder>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      tp: { triggerPrice: tpTriggerPrice },
+      sl: { triggerPrice: slTriggerPrice },
+    }),
+  });
+}
+
+export async function cancelPositionOcoOrder(
+  positionId: number,
+  ocoGroupId: string,
+): Promise<PositionOcoOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/oco-orders/${ocoGroupId}`;
+
+  return fetchWithRetry<PositionOcoOrder>(requestUrl, { method: "DELETE" });
 }
 
 export async function fetchPnlSummary(): Promise<PnlSummary> {

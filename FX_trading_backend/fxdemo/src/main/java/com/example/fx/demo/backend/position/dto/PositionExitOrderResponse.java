@@ -8,6 +8,7 @@ public record PositionExitOrderResponse(
         String type,
         BigDecimal triggerPrice,
         String status,
+        String ocoGroupId,
         LocalDateTime createdAt,
         LocalDateTime triggeredAt
 ) {

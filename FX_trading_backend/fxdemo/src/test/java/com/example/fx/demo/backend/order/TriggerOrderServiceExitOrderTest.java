@@ -19,6 +19,8 @@ import com.example.fx.demo.backend.position.PositionRepository;
 import com.example.fx.demo.backend.position.PositionService;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionOcoOrderLegRequest;
+import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
 import com.example.fx.demo.backend.trade.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.TradeExecutionService;
 import com.example.fx.demo.backend.trade.dto.OrderResultResponse;
@@ -33,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -132,6 +135,7 @@ class TriggerOrderServiceExitOrderTest {
     @Test
     void triggersTakeProfitAtSpecifiedPrice() {
         TriggerOrder order = new TriggerOrder();
+        ReflectionTestUtils.setField(order, "id", 10L);
         order.setPurpose(TriggerOrderPurpose.EXIT);
         order.setExitType(ExitOrderType.TP);
         order.setTargetPositionId(1L);
@@ -150,6 +154,71 @@ class TriggerOrderServiceExitOrderTest {
         verify(positionService).closePositionForLockedAccount(1L, OrderSource.TRIGGER, new BigDecimal("156.000"));
         assertThat(order.getStatus()).isEqualTo(TriggerOrderStatus.TRIGGERED);
         assertThat(order.getResultingOrderId()).isEqualTo(99L);
+    }
+
+    @Test
+    void createsOcoPairWithSameGroupId() {
+        mockDefaultAccount();
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        mockMarketRate("155.120", "155.123");
+        when(triggerOrderRepository.existsByTargetPositionIdAndExitTypeAndStatusIn(
+                1L,
+                ExitOrderType.TP,
+                List.of(TriggerOrderStatus.PENDING, TriggerOrderStatus.WAITING)
+        )).thenReturn(false);
+        when(triggerOrderRepository.existsByTargetPositionIdAndExitTypeAndStatusIn(
+                1L,
+                ExitOrderType.SL,
+                List.of(TriggerOrderStatus.PENDING, TriggerOrderStatus.WAITING)
+        )).thenReturn(false);
+        when(triggerOrderRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = service.placeOcoOrder(
+                1L,
+                new PositionOcoOrderRequest(
+                        new PositionOcoOrderLegRequest(new BigDecimal("156.000")),
+                        new PositionOcoOrderLegRequest(new BigDecimal("154.000"))
+                )
+        );
+
+        assertThat(response.ocoGroupId()).isNotBlank();
+        assertThat(response.orders()).hasSize(2);
+        assertThat(response.orders()).allSatisfy(order -> assertThat(order.ocoGroupId()).isEqualTo(response.ocoGroupId()));
+    }
+
+    @Test
+    void cancelsOcoSiblingWhenOneSideTriggers() {
+        TriggerOrder takeProfit = new TriggerOrder();
+        ReflectionTestUtils.setField(takeProfit, "id", 10L);
+        takeProfit.setPurpose(TriggerOrderPurpose.EXIT);
+        takeProfit.setExitType(ExitOrderType.TP);
+        takeProfit.setTargetPositionId(1L);
+        takeProfit.setCurrencyPair("USD/JPY");
+        takeProfit.setTriggerPrice(new BigDecimal("156.000"));
+        takeProfit.setStatus(TriggerOrderStatus.PENDING);
+        takeProfit.setOcoGroupId("oco-1");
+        TriggerOrder stopLoss = new TriggerOrder();
+        ReflectionTestUtils.setField(stopLoss, "id", 11L);
+        stopLoss.setPurpose(TriggerOrderPurpose.EXIT);
+        stopLoss.setExitType(ExitOrderType.SL);
+        stopLoss.setTargetPositionId(1L);
+        stopLoss.setCurrencyPair("USD/JPY");
+        stopLoss.setTriggerPrice(new BigDecimal("154.000"));
+        stopLoss.setStatus(TriggerOrderStatus.PENDING);
+        stopLoss.setOcoGroupId("oco-1");
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(takeProfit));
+        when(triggerOrderRepository.findByOcoGroupIdOrderByCreatedAtAsc("oco-1")).thenReturn(List.of(takeProfit, stopLoss));
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        mockMarketRate("156.100", "156.103");
+        when(positionService.closePositionForLockedAccount(1L, OrderSource.TRIGGER, new BigDecimal("156.000")))
+                .thenReturn(closeResponse());
+
+        service.evaluatePendingOrder(10L);
+
+        assertThat(takeProfit.getStatus()).isEqualTo(TriggerOrderStatus.TRIGGERED);
+        assertThat(stopLoss.getStatus()).isEqualTo(TriggerOrderStatus.CANCELLED);
     }
 
     private void mockDefaultAccount() {

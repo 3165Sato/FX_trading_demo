@@ -41,4 +41,6 @@ public interface TriggerOrderRepository extends JpaRepository<TriggerOrder, Long
             Collection<Long> targetPositionIds,
             TriggerOrderPurpose purpose
     );
+
+    List<TriggerOrder> findByOcoGroupIdOrderByCreatedAtAsc(String ocoGroupId);
 }

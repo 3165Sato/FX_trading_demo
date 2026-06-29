@@ -21,6 +21,8 @@ import com.example.fx.demo.backend.position.PositionRepository;
 import com.example.fx.demo.backend.position.PositionService;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
+import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionOcoOrderResponse;
 import com.example.fx.demo.backend.trade.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.DemoTradingAccountInitializer;
 import com.example.fx.demo.backend.trade.TradeExecutionService;
@@ -35,6 +37,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
 
 @Service
 public class TriggerOrderService {
@@ -108,6 +112,9 @@ public class TriggerOrderService {
     public PendingOrderResponse cancelPendingOrder(Long id) {
         TriggerOrder order = triggerOrderRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Pending order not found: " + id));
+        if (order.getOcoGroupId() != null && !order.getOcoGroupId().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "OCO注文はグループ単位で取消してください。");
+        }
         if (order.getStatus() != TriggerOrderStatus.PENDING && order.getStatus() != TriggerOrderStatus.WAITING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only pending orders can be cancelled");
         }
@@ -128,6 +135,22 @@ public class TriggerOrderService {
         return accountTradeLockService.withAccountLock(
                 DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
                 () -> cancelExitOrderLocked(positionId, exitOrderId)
+        );
+    }
+
+    @Transactional
+    public PositionOcoOrderResponse placeOcoOrder(Long positionId, PositionOcoOrderRequest request) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> placeOcoOrderLocked(positionId, request)
+        );
+    }
+
+    @Transactional
+    public PositionOcoOrderResponse cancelOcoOrder(Long positionId, String groupId) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> cancelOcoOrderLocked(positionId, groupId)
         );
     }
 
@@ -196,6 +219,57 @@ public class TriggerOrderService {
         }
         order.setStatus(TriggerOrderStatus.CANCELLED);
         return toExitOrderResponse(triggerOrderRepository.save(order));
+    }
+
+    private PositionOcoOrderResponse placeOcoOrderLocked(Long positionId, PositionOcoOrderRequest request) {
+        if (request.tp() == null || request.tp().triggerPrice() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OCOのTP価格を指定してください。");
+        }
+        if (request.sl() == null || request.sl().triggerPrice() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OCOのSL価格を指定してください。");
+        }
+        ExitOrderContext context = loadExitOrderContext(positionId);
+        if (triggerOrderRepository.existsByTargetPositionIdAndExitTypeAndStatusIn(positionId, ExitOrderType.TP, pendingStatuses())
+                || triggerOrderRepository.existsByTargetPositionIdAndExitTypeAndStatusIn(positionId, ExitOrderType.SL, pendingStatuses())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "この建玉には未発動のTPまたはSLがすでに設定されています。");
+        }
+
+        BigDecimal tpPrice = request.tp().triggerPrice().setScale(context.currencyPair().getPriceScale(), RoundingMode.HALF_UP);
+        BigDecimal slPrice = request.sl().triggerPrice().setScale(context.currencyPair().getPriceScale(), RoundingMode.HALF_UP);
+        if (tpPrice.compareTo(BigDecimal.ZERO) <= 0 || slPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OCOのTP/SL価格は0より大きい値を指定してください。");
+        }
+        validateExitDirection(context.position(), ExitOrderType.TP, tpPrice, context.marketRate());
+        validateExitDirection(context.position(), ExitOrderType.SL, slPrice, context.marketRate());
+
+        String groupId = UUID.randomUUID().toString();
+        List<TriggerOrder> saved = triggerOrderRepository.saveAll(List.of(
+                createExitOrder(context, ExitOrderType.TP, tpPrice, groupId),
+                createExitOrder(context, ExitOrderType.SL, slPrice, groupId)
+        ));
+        return new PositionOcoOrderResponse(groupId, saved.stream().map(this::toExitOrderResponse).toList());
+    }
+
+    private PositionOcoOrderResponse cancelOcoOrderLocked(Long positionId, String groupId) {
+        if (groupId == null || groupId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OCOグループIDを指定してください。");
+        }
+        List<TriggerOrder> groupOrders = triggerOrderRepository.findByOcoGroupIdOrderByCreatedAtAsc(groupId);
+        if (groupOrders.isEmpty() || groupOrders.stream().anyMatch(order -> !positionId.equals(order.getTargetPositionId()))) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "OCO注文が見つかりません: " + groupId);
+        }
+        List<TriggerOrder> cancelableOrders = groupOrders.stream()
+                .filter(order -> order.getStatus() == TriggerOrderStatus.PENDING || order.getStatus() == TriggerOrderStatus.WAITING)
+                .toList();
+        if (cancelableOrders.size() != groupOrders.size()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "未発動のOCO注文のみグループ取消できます。");
+        }
+        for (TriggerOrder order : cancelableOrders) {
+            order.setStatus(TriggerOrderStatus.CANCELLED);
+            order.setRejectionReason("OCOグループ取消によりキャンセルしました。");
+        }
+        List<TriggerOrder> saved = triggerOrderRepository.saveAll(cancelableOrders);
+        return new PositionOcoOrderResponse(groupId, saved.stream().map(this::toExitOrderResponse).toList());
     }
 
     @Transactional(readOnly = true)
@@ -309,9 +383,28 @@ public class TriggerOrderService {
             order.setTriggeredAt(LocalDateTime.now());
             order.setResultingOrderId(result.execution().order().id());
             triggerOrderRepository.save(order);
+            cancelOcoSiblings(order);
         } catch (ResponseStatusException exception) {
             reject(order, exception.getReason() == null ? "Exit order execution rejected" : exception.getReason());
         }
+    }
+
+    private void cancelOcoSiblings(TriggerOrder triggeredOrder) {
+        String groupId = triggeredOrder.getOcoGroupId();
+        if (groupId == null || groupId.isBlank()) {
+            return;
+        }
+        List<TriggerOrder> siblings = triggerOrderRepository.findByOcoGroupIdOrderByCreatedAtAsc(groupId).stream()
+                .filter(order -> !Objects.equals(triggeredOrder.getId(), order.getId()))
+                .filter(order -> order.getStatus() == TriggerOrderStatus.PENDING
+                        || order.getStatus() == TriggerOrderStatus.WAITING
+                        || order.getStatus() == TriggerOrderStatus.EXPIRED)
+                .toList();
+        for (TriggerOrder sibling : siblings) {
+            sibling.setStatus(TriggerOrderStatus.CANCELLED);
+            sibling.setRejectionReason("OCOの相手注文が約定したためキャンセルしました。");
+        }
+        triggerOrderRepository.saveAll(siblings);
     }
 
     private void reject(TriggerOrder order, String reason) {
@@ -404,6 +497,52 @@ public class TriggerOrderService {
 
     private OrderSide closeSide(PositionSide side) {
         return side == PositionSide.LONG ? OrderSide.SELL : OrderSide.BUY;
+    }
+
+    private ExitOrderContext loadExitOrderContext(Long positionId) {
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        Position position = positionRepository.findById(positionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "対象建玉が見つかりません: " + positionId));
+        if (!account.getId().equals(position.getAccountId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "対象建玉が見つかりません: " + positionId);
+        }
+        if (position.getStatus() != PositionStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "OPEN状態の建玉にのみ決済注文を設定できます。");
+        }
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(position.getCurrencyPair())
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Currency pair not found: " + position.getCurrencyPair()
+                ));
+        MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Latest market rate is not available: " + currencyPair.getSymbol()
+                ));
+        return new ExitOrderContext(account, position, currencyPair, marketRate);
+    }
+
+    private TriggerOrder createExitOrder(
+            ExitOrderContext context,
+            ExitOrderType exitType,
+            BigDecimal triggerPrice,
+            String ocoGroupId
+    ) {
+        TriggerOrder order = new TriggerOrder();
+        order.setAccountId(context.account().getId());
+        order.setCurrencyPair(context.currencyPair().getSymbol());
+        order.setSide(closeSide(context.position().getSide()));
+        order.setOrderType(exitType == ExitOrderType.TP ? OrderType.LIMIT : OrderType.STOP);
+        order.setQuantity(context.position().getQuantity());
+        order.setTriggerPrice(triggerPrice);
+        order.setStatus(TriggerOrderStatus.PENDING);
+        order.setPurpose(TriggerOrderPurpose.EXIT);
+        order.setExitType(exitType);
+        order.setTargetPositionId(context.position().getId());
+        order.setOcoGroupId(ocoGroupId);
+        return order;
     }
 
     private void validateBasicRequest(PendingOrderRequest request) {
@@ -518,8 +657,17 @@ public class TriggerOrderService {
                 exitType == null ? null : exitType.name(),
                 order.getTriggerPrice(),
                 order.getStatus().name(),
+                order.getOcoGroupId(),
                 order.getCreatedAt(),
                 order.getTriggeredAt()
         );
+    }
+
+    private record ExitOrderContext(
+            Account account,
+            Position position,
+            CurrencyPair currencyPair,
+            MarketRate marketRate
+    ) {
     }
 }
