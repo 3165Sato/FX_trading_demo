@@ -14,6 +14,11 @@ public record PendingOrderResponse(
         LocalDateTime createdAt,
         LocalDateTime triggeredAt,
         Long resultingOrderId,
-        String rejectionReason
+        String rejectionReason,
+        String purpose,
+        String exitType,
+        Long targetPositionId,
+        Long parentOrderId,
+        String ocoGroupId
 ) {
 }

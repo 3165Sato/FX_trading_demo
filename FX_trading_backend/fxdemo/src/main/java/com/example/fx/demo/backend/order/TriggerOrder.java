@@ -41,6 +41,7 @@ public class TriggerOrder extends BaseEntity {
     private Long resultingOrderId;
     private String rejectionReason;
     private Long targetPositionId;
+    private Long parentOrderId;
     private String ocoGroupId;
 
     @Enumerated(EnumType.STRING)
@@ -138,6 +139,14 @@ public class TriggerOrder extends BaseEntity {
 
     public void setTargetPositionId(Long targetPositionId) {
         this.targetPositionId = targetPositionId;
+    }
+
+    public Long getParentOrderId() {
+        return parentOrderId;
+    }
+
+    public void setParentOrderId(Long parentOrderId) {
+        this.parentOrderId = parentOrderId;
     }
 
     public String getOcoGroupId() {

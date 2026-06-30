@@ -20,6 +20,7 @@ import {
   getSpreadStats,
   placePositionExitOrder,
   placePositionOcoOrder,
+  placeIfdOrder,
   placePendingOrder,
   placeMarketOrder,
   triggerNewsEvent,
@@ -75,6 +76,8 @@ export function MarketMonitorDashboard() {
   const [orderType, setOrderType] = useState<OrderType>("MARKET");
   const [orderQuantity, setOrderQuantity] = useState("10000");
   const [triggerPrice, setTriggerPrice] = useState("");
+  const [ifdExitType, setIfdExitType] = useState<ExitOrderType>("TP");
+  const [ifdExitPrice, setIfdExitPrice] = useState("");
   const [rateChanges, setRateChanges] = useState<Record<string, number>>({});
   const [ratesLoading, setRatesLoading] = useState(true);
   const [ticksLoading, setTicksLoading] = useState(true);
@@ -97,6 +100,7 @@ export function MarketMonitorDashboard() {
   const [nowMs, setNowMs] = useState(0);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [submittingOrderSide, setSubmittingOrderSide] = useState<OrderSide | null>(null);
+  const [submittingIfdSide, setSubmittingIfdSide] = useState<OrderSide | null>(null);
   const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
   const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
   const [exitOrderDrafts, setExitOrderDrafts] = useState<Record<number, Partial<Record<ExitOrderType, string>>>>({});
@@ -501,6 +505,51 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const submitIfdOrder = async (side: OrderSide) => {
+    const quantity = Number(orderQuantity);
+    const entryPrice = Number(triggerPrice);
+    const exitPrice = Number(ifdExitPrice);
+    if (orderType === "MARKET") {
+      setOrderError("IFD entry must be LIMIT or STOP.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setOrderError("Quantity must be greater than zero.");
+      return;
+    }
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+      setOrderError("Entry trigger price must be greater than zero.");
+      return;
+    }
+    if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+      setOrderError("IFD exit price must be greater than zero.");
+      return;
+    }
+
+    setSubmittingIfdSide(side);
+    try {
+      const result = await placeIfdOrder(
+        tradingActivePair,
+        side,
+        orderType,
+        quantity,
+        entryPrice,
+        ifdExitType,
+        exitPrice,
+      );
+      setLastOrderMessage(
+        `IFD ${result.entry.orderType} ${result.entry.side} ${formatQuantity(result.entry.quantity)} ${result.entry.currencyPair} -> ${ifdExitType} ${formatPrice(exitPrice, result.entry.currencyPair)}`,
+      );
+      setPendingOrders((current) => [result.entry, result.exit, ...current].slice(0, ORDER_LIMIT));
+      setOrderError(null);
+      void loadPendingOrders();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setSubmittingIfdSide(null);
+    }
+  };
+
   const cancelSelectedPendingOrder = async (id: number) => {
     setCancelingPendingOrderId(id);
     try {
@@ -683,6 +732,8 @@ export function MarketMonitorDashboard() {
             cancelingOcoGroupId={cancelingOcoGroupId}
             cancelingPendingOrderId={cancelingPendingOrderId}
             exitOrderDrafts={exitOrderDrafts}
+            ifdExitPrice={ifdExitPrice}
+            ifdExitType={ifdExitType}
             orderError={orderError}
             orderQuantity={orderQuantity}
             orderType={orderType}
@@ -697,17 +748,21 @@ export function MarketMonitorDashboard() {
             trades={trades}
             triggerPrice={triggerPrice}
             submittingExitOrder={submittingExitOrder}
+            submittingIfdSide={submittingIfdSide}
             submittingOcoPositionId={submittingOcoPositionId}
             onCancelPendingOrder={cancelSelectedPendingOrder}
             onCancelExitOrder={cancelSelectedExitOrder}
             onCancelOcoOrder={cancelSelectedOcoOrder}
             onClosePosition={closeSelectedPosition}
             onExitOrderDraftChange={updateExitOrderDraft}
+            onIfdExitPriceChange={setIfdExitPrice}
+            onIfdExitTypeChange={setIfdExitType}
             onQuantityChange={setOrderQuantity}
             onOrderTypeChange={setOrderType}
             onSelectPair={selectTradingCurrencyPair}
             onSubmitOrder={submitMarketOrder}
             onSubmitExitOrder={submitPositionExitOrder}
+            onSubmitIfdOrder={submitIfdOrder}
             onSubmitOcoOrder={submitPositionOcoOrder}
             onTriggerPriceChange={setTriggerPrice}
             closingPositionId={closingPositionId}
@@ -918,6 +973,8 @@ function TradingScreen({
   cancelingPendingOrderId,
   closingPositionId,
   exitOrderDrafts,
+  ifdExitPrice,
+  ifdExitType,
   orderError,
   orderQuantity,
   orderType,
@@ -932,17 +989,21 @@ function TradingScreen({
   trades,
   triggerPrice,
   submittingExitOrder,
+  submittingIfdSide,
   submittingOcoPositionId,
   onCancelExitOrder,
   onCancelOcoOrder,
   onCancelPendingOrder,
   onClosePosition,
   onExitOrderDraftChange,
+  onIfdExitPriceChange,
+  onIfdExitTypeChange,
   onQuantityChange,
   onOrderTypeChange,
   onSelectPair,
   onSubmitOrder,
   onSubmitExitOrder,
+  onSubmitIfdOrder,
   onSubmitOcoOrder,
   onTriggerPriceChange,
 }: {
@@ -953,6 +1014,8 @@ function TradingScreen({
   cancelingPendingOrderId: number | null;
   closingPositionId: number | null;
   exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
+  ifdExitPrice: string;
+  ifdExitType: ExitOrderType;
   orderError: string | null;
   orderQuantity: string;
   orderType: OrderType;
@@ -967,17 +1030,21 @@ function TradingScreen({
   trades: TradeSummary[];
   triggerPrice: string;
   submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
+  submittingIfdSide: OrderSide | null;
   submittingOcoPositionId: number | null;
   onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelOcoOrder: (positionId: number, groupId: string) => void;
   onCancelPendingOrder: (id: number) => void;
   onClosePosition: (id: number) => void;
   onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onIfdExitPriceChange: (price: string) => void;
+  onIfdExitTypeChange: (type: ExitOrderType) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSelectPair: (currencyPair: string) => void;
   onSubmitOrder: (side: OrderSide) => void;
   onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
+  onSubmitIfdOrder: (side: OrderSide) => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
@@ -997,15 +1064,21 @@ function TradingScreen({
           <MarketOrderPanel
             activePair={activePair}
             error={orderError}
+            ifdExitPrice={ifdExitPrice}
+            ifdExitType={ifdExitType}
             lastMessage={lastOrderMessage}
             orderQuantity={orderQuantity}
             orderType={orderType}
             rate={selectedRate}
+            submittingIfdSide={submittingIfdSide}
             submittingSide={submittingOrderSide}
             triggerPrice={triggerPrice}
+            onIfdExitPriceChange={onIfdExitPriceChange}
+            onIfdExitTypeChange={onIfdExitTypeChange}
             onQuantityChange={onQuantityChange}
             onOrderTypeChange={onOrderTypeChange}
             onSubmit={onSubmitOrder}
+            onSubmitIfd={onSubmitIfdOrder}
             onTriggerPriceChange={onTriggerPriceChange}
           />
         </div>
@@ -1161,28 +1234,40 @@ function PriceReferencePanel({
 function MarketOrderPanel({
   activePair,
   error,
+  ifdExitPrice,
+  ifdExitType,
   lastMessage,
   orderQuantity,
   orderType,
   rate,
+  submittingIfdSide,
   submittingSide,
   triggerPrice,
+  onIfdExitPriceChange,
+  onIfdExitTypeChange,
   onQuantityChange,
   onOrderTypeChange,
   onSubmit,
+  onSubmitIfd,
   onTriggerPriceChange,
 }: {
   activePair: string;
   error: string | null;
+  ifdExitPrice: string;
+  ifdExitType: ExitOrderType;
   lastMessage: string | null;
   orderQuantity: string;
   orderType: OrderType;
   rate?: MarketRate;
+  submittingIfdSide: OrderSide | null;
   submittingSide: OrderSide | null;
   triggerPrice: string;
+  onIfdExitPriceChange: (price: string) => void;
+  onIfdExitTypeChange: (type: ExitOrderType) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSubmit: (side: OrderSide) => void;
+  onSubmitIfd: (side: OrderSide) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
   return (
@@ -1246,6 +1331,59 @@ function MarketOrderPanel({
             </div>
           </label>
         )}
+        {orderType !== "MARKET" && (
+          <div className="border border-[#262d38] bg-[#0d1117] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="text-[10px] uppercase text-[#768390]">IFD exit leg</span>
+              <div className="grid grid-cols-2 gap-1 border border-[#262d38] bg-[#161b22] p-1">
+                {(["TP", "SL"] as ExitOrderType[]).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => onIfdExitTypeChange(type)}
+                    className={`px-2 py-1 font-mono text-[10px] transition-colors ${
+                      ifdExitType === type
+                        ? "bg-[#21272f] text-[#e6edf3]"
+                        : "text-[#768390] hover:bg-[#0d1117] hover:text-[#e6edf3]"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <input
+              value={ifdExitPrice}
+              onChange={(event) => onIfdExitPriceChange(event.target.value)}
+              inputMode="decimal"
+              placeholder={`${ifdExitType} price`}
+              className="w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+            />
+            <div className="mt-2 font-mono text-[10px] leading-5 text-[#768390]">
+              IFD binds this {ifdExitType} after the entry fills. Direction is checked at fill time.
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <OrderButton
+                disabled={submittingIfdSide !== null || submittingSide !== null || !rate}
+                loading={submittingIfdSide === "SELL"}
+                price={rate?.bid}
+                side="SELL"
+                currencyPair={activePair}
+                labelPrefix="IFD"
+                onSubmit={onSubmitIfd}
+              />
+              <OrderButton
+                disabled={submittingIfdSide !== null || submittingSide !== null || !rate}
+                loading={submittingIfdSide === "BUY"}
+                price={rate?.ask}
+                side="BUY"
+                currencyPair={activePair}
+                labelPrefix="IFD"
+                onSubmit={onSubmitIfd}
+              />
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <OrderButton
             disabled={submittingSide !== null || !rate}
@@ -1274,6 +1412,7 @@ function MarketOrderPanel({
 function OrderButton({
   currencyPair,
   disabled,
+  labelPrefix,
   loading,
   price,
   side,
@@ -1281,6 +1420,7 @@ function OrderButton({
 }: {
   currencyPair: string;
   disabled: boolean;
+  labelPrefix?: string;
   loading: boolean;
   price?: number;
   side: OrderSide;
@@ -1297,7 +1437,9 @@ function OrderButton({
       onClick={() => onSubmit(side)}
       className={`border px-3 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${tone}`}
     >
-      <div className="font-mono text-sm font-semibold">{loading ? "Sending..." : side}</div>
+      <div className="font-mono text-sm font-semibold">
+        {loading ? "Sending..." : `${labelPrefix ? `${labelPrefix} ` : ""}${side}`}
+      </div>
       <div className="mt-1 font-mono text-[11px] opacity-80">
         {price === undefined ? "--" : formatPrice(price, currencyPair)}
       </div>
@@ -1693,10 +1835,12 @@ function PendingOrderRow({
   onCancel: (id: number) => void;
 }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
+  const typeLabel = order.exitType ? `${order.exitType}` : order.orderType;
+  const pairLabel = order.parentOrderId ? `IFD #${order.parentOrderId}` : order.currencyPair;
   return (
     <div className="grid grid-cols-[76px_62px_62px_1fr_72px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
-      <span className="text-[#e6edf3]">{order.currencyPair}</span>
-      <span className="text-[#d29922]">{order.orderType}</span>
+      <span className="truncate text-[#e6edf3]">{pairLabel}</span>
+      <span className="text-[#d29922]">{typeLabel}</span>
       <span className={sideClass}>{order.side}</span>
       <span className="text-right text-[#adbac7]">{formatPrice(order.triggerPrice, order.currencyPair)}</span>
       <button

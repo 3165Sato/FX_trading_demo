@@ -16,6 +16,8 @@ import com.example.fx.demo.backend.market.MarketRate;
 import com.example.fx.demo.backend.market.MarketRateRepository;
 import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
+import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
+import com.example.fx.demo.backend.order.dto.IfdOrderResponse;
 import com.example.fx.demo.backend.position.Position;
 import com.example.fx.demo.backend.position.PositionRepository;
 import com.example.fx.demo.backend.position.PositionService;
@@ -109,6 +111,14 @@ public class TriggerOrderService {
     }
 
     @Transactional
+    public IfdOrderResponse placeIfdOrder(IfdOrderRequest request) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> placeIfdOrderLocked(request)
+        );
+    }
+
+    @Transactional
     public PendingOrderResponse cancelPendingOrder(Long id) {
         TriggerOrder order = triggerOrderRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Pending order not found: " + id));
@@ -119,7 +129,9 @@ public class TriggerOrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only pending orders can be cancelled");
         }
         order.setStatus(TriggerOrderStatus.CANCELLED);
-        return toResponse(triggerOrderRepository.save(order));
+        TriggerOrder savedOrder = triggerOrderRepository.save(order);
+        cancelIfdChildren(savedOrder);
+        return toResponse(savedOrder);
     }
 
     @Transactional
@@ -221,6 +233,63 @@ public class TriggerOrderService {
         return toExitOrderResponse(triggerOrderRepository.save(order));
     }
 
+    private IfdOrderResponse placeIfdOrderLocked(IfdOrderRequest request) {
+        if (request.entry() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFDの新規注文を指定してください。");
+        }
+        if (request.exit() == null || request.exit().type() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFDの決済注文はTPまたはSLを1本だけ指定してください。");
+        }
+        validateBasicRequest(request.entry());
+        if (request.exit().triggerPrice() == null || request.exit().triggerPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFDの決済注文価格は0より大きい値を指定してください。");
+        }
+
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(request.entry().currencyPair())
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Currency pair not found: " + request.entry().currencyPair()
+                ));
+        MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Latest market rate is not available: " + currencyPair.getSymbol()
+                ));
+
+        BigDecimal quantity = request.entry().quantity().setScale(currencyPair.getQuantityScale(), RoundingMode.HALF_UP);
+        BigDecimal entryTriggerPrice = request.entry().triggerPrice().setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        validateTriggerDirection(request.entry().side(), request.entry().orderType(), entryTriggerPrice, marketRate);
+
+        TriggerOrder entryOrder = new TriggerOrder();
+        entryOrder.setAccountId(account.getId());
+        entryOrder.setCurrencyPair(currencyPair.getSymbol());
+        entryOrder.setSide(request.entry().side());
+        entryOrder.setOrderType(request.entry().orderType());
+        entryOrder.setQuantity(quantity);
+        entryOrder.setTriggerPrice(entryTriggerPrice);
+        entryOrder.setStatus(TriggerOrderStatus.PENDING);
+        entryOrder.setPurpose(TriggerOrderPurpose.ENTRY);
+        TriggerOrder savedEntry = triggerOrderRepository.save(entryOrder);
+
+        TriggerOrder exitOrder = new TriggerOrder();
+        exitOrder.setAccountId(account.getId());
+        exitOrder.setCurrencyPair(currencyPair.getSymbol());
+        exitOrder.setSide(closeSide(request.entry().side() == OrderSide.BUY ? PositionSide.LONG : PositionSide.SHORT));
+        exitOrder.setOrderType(request.exit().type() == ExitOrderType.TP ? OrderType.LIMIT : OrderType.STOP);
+        exitOrder.setQuantity(quantity);
+        exitOrder.setTriggerPrice(request.exit().triggerPrice().setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP));
+        exitOrder.setStatus(TriggerOrderStatus.PENDING);
+        exitOrder.setPurpose(TriggerOrderPurpose.EXIT);
+        exitOrder.setExitType(request.exit().type());
+        exitOrder.setParentOrderId(savedEntry.getId());
+        TriggerOrder savedExit = triggerOrderRepository.save(exitOrder);
+
+        return new IfdOrderResponse(toResponse(savedEntry), toResponse(savedExit));
+    }
+
     private PositionOcoOrderResponse placeOcoOrderLocked(Long positionId, PositionOcoOrderRequest request) {
         if (request.tp() == null || request.tp().triggerPrice() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OCOのTP価格を指定してください。");
@@ -287,7 +356,7 @@ public class TriggerOrderService {
             orders = triggerOrderRepository.findAllByOrderByCreatedAtDesc(page);
         }
         return orders.stream()
-                .filter(this::isEntryOrder)
+                .filter(order -> isEntryOrder(order) || order.getParentOrderId() != null)
                 .map(this::toResponse)
                 .toList();
     }
@@ -298,6 +367,7 @@ public class TriggerOrderService {
                         TriggerOrderStatus.PENDING,
                         TriggerOrderStatus.WAITING
                 )).stream()
+                .filter(order -> isEntryOrder(order) || order.getTargetPositionId() != null)
                 .map(TriggerOrder::getId)
                 .toList();
     }
@@ -345,6 +415,7 @@ public class TriggerOrderService {
             order.setTriggeredAt(LocalDateTime.now());
             order.setResultingOrderId(result.order().id());
             triggerOrderRepository.save(order);
+            bindIfdChildren(order, result.trade().positionId());
         } catch (ResponseStatusException exception) {
             reject(order, exception.getReason() == null ? "Trigger execution rejected" : exception.getReason());
         }
@@ -545,6 +616,70 @@ public class TriggerOrderService {
         return order;
     }
 
+    private void bindIfdChildren(TriggerOrder parentOrder, Long positionId) {
+        if (!isEntryOrder(parentOrder) || positionId == null) {
+            return;
+        }
+        List<TriggerOrder> children = triggerOrderRepository.findByParentOrderIdAndStatusInOrderByCreatedAtAsc(
+                parentOrder.getId(),
+                pendingStatuses()
+        );
+        if (children.isEmpty()) {
+            return;
+        }
+        Position position = positionRepository.findById(positionId).orElse(null);
+        if (position == null || position.getStatus() != PositionStatus.OPEN) {
+            for (TriggerOrder child : children) {
+                child.setStatus(TriggerOrderStatus.EXPIRED);
+                child.setRejectionReason("IFD親注文の約定後に対象建玉を確認できないため失効しました。");
+            }
+            triggerOrderRepository.saveAll(children);
+            return;
+        }
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(position.getCurrencyPair())
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElse(null);
+        MarketRate marketRate = currencyPair == null
+                ? null
+                : marketRateRepository.findByCurrencyPair(currencyPair).orElse(null);
+        for (TriggerOrder child : children) {
+            if (currencyPair == null || marketRate == null || child.getExitType() == null) {
+                child.setStatus(TriggerOrderStatus.EXPIRED);
+                child.setRejectionReason("IFD子注文を建玉へバインドできないため失効しました。");
+                continue;
+            }
+            try {
+                validateExitDirection(position, child.getExitType(), child.getTriggerPrice(), marketRate);
+                child.setTargetPositionId(position.getId());
+                child.setCurrencyPair(currencyPair.getSymbol());
+                child.setSide(closeSide(position.getSide()));
+                child.setOrderType(child.getExitType() == ExitOrderType.TP ? OrderType.LIMIT : OrderType.STOP);
+                child.setQuantity(position.getQuantity());
+                child.setStatus(TriggerOrderStatus.PENDING);
+                child.setRejectionReason(null);
+            } catch (ResponseStatusException exception) {
+                child.setStatus(TriggerOrderStatus.EXPIRED);
+                child.setRejectionReason("IFD親注文の約定時点で決済注文の価格方向が不正なため失効しました。");
+            }
+        }
+        triggerOrderRepository.saveAll(children);
+    }
+
+    private void cancelIfdChildren(TriggerOrder parentOrder) {
+        if (!isEntryOrder(parentOrder)) {
+            return;
+        }
+        List<TriggerOrder> children = triggerOrderRepository.findByParentOrderIdAndStatusInOrderByCreatedAtAsc(
+                parentOrder.getId(),
+                pendingStatuses()
+        );
+        for (TriggerOrder child : children) {
+            child.setStatus(TriggerOrderStatus.CANCELLED);
+            child.setRejectionReason("IFD親注文の取消によりキャンセルしました。");
+        }
+        triggerOrderRepository.saveAll(children);
+    }
+
     private void validateBasicRequest(PendingOrderRequest request) {
         if (request.currencyPair() == null || request.currencyPair().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "通貨ペアを選択してください。");
@@ -646,7 +781,12 @@ public class TriggerOrderService {
                 order.getCreatedAt(),
                 order.getTriggeredAt(),
                 order.getResultingOrderId(),
-                order.getRejectionReason()
+                order.getRejectionReason(),
+                order.getPurpose() == null ? TriggerOrderPurpose.ENTRY.name() : order.getPurpose().name(),
+                order.getExitType() == null ? null : order.getExitType().name(),
+                order.getTargetPositionId(),
+                order.getParentOrderId(),
+                order.getOcoGroupId()
         );
     }
 

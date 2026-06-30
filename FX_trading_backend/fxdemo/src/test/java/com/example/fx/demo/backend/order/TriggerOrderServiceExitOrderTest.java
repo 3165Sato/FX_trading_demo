@@ -21,6 +21,8 @@ import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderLegRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
+import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
+import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
 import com.example.fx.demo.backend.trade.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.TradeExecutionService;
 import com.example.fx.demo.backend.trade.dto.OrderResultResponse;
@@ -221,6 +223,74 @@ class TriggerOrderServiceExitOrderTest {
         assertThat(stopLoss.getStatus()).isEqualTo(TriggerOrderStatus.CANCELLED);
     }
 
+    @Test
+    void createsIfdParentAndUnboundExitChild() {
+        mockDefaultAccount();
+        mockCurrencyPair();
+        mockMarketRate("155.120", "155.123");
+        when(triggerOrderRepository.save(any(TriggerOrder.class))).thenAnswer(new SaveTriggerOrderAnswer());
+
+        var response = service.placeIfdOrder(new IfdOrderRequest(
+                new PendingOrderRequest(
+                        "USD/JPY",
+                        OrderSide.BUY,
+                        OrderType.LIMIT,
+                        new BigDecimal("1000"),
+                        new BigDecimal("154.500")
+                ),
+                new PositionExitOrderRequest(ExitOrderType.TP, new BigDecimal("156.000"))
+        ));
+
+        assertThat(response.entry().purpose()).isEqualTo("ENTRY");
+        assertThat(response.exit().purpose()).isEqualTo("EXIT");
+        assertThat(response.exit().parentOrderId()).isEqualTo(response.entry().id());
+        assertThat(response.exit().targetPositionId()).isNull();
+    }
+
+    @Test
+    void bindsIfdExitChildWhenParentEntryTriggers() {
+        TriggerOrder parent = new TriggerOrder();
+        ReflectionTestUtils.setField(parent, "id", 20L);
+        parent.setPurpose(TriggerOrderPurpose.ENTRY);
+        parent.setCurrencyPair("USD/JPY");
+        parent.setSide(OrderSide.BUY);
+        parent.setOrderType(OrderType.LIMIT);
+        parent.setQuantity(new BigDecimal("1000"));
+        parent.setTriggerPrice(new BigDecimal("154.500"));
+        parent.setStatus(TriggerOrderStatus.PENDING);
+        TriggerOrder child = new TriggerOrder();
+        ReflectionTestUtils.setField(child, "id", 21L);
+        child.setPurpose(TriggerOrderPurpose.EXIT);
+        child.setExitType(ExitOrderType.TP);
+        child.setParentOrderId(20L);
+        child.setCurrencyPair("USD/JPY");
+        child.setSide(OrderSide.SELL);
+        child.setOrderType(OrderType.LIMIT);
+        child.setQuantity(new BigDecimal("1000"));
+        child.setTriggerPrice(new BigDecimal("156.000"));
+        child.setStatus(TriggerOrderStatus.PENDING);
+        when(triggerOrderRepository.findById(20L)).thenReturn(Optional.of(parent));
+        when(triggerOrderRepository.findByParentOrderIdAndStatusInOrderByCreatedAtAsc(
+                20L,
+                List.of(TriggerOrderStatus.PENDING, TriggerOrderStatus.WAITING)
+        )).thenReturn(List.of(child));
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        mockMarketRate("154.497", "154.500");
+        when(tradeExecutionService.executeTriggeredOrder(
+                "USD/JPY",
+                OrderSide.BUY,
+                new BigDecimal("1000"),
+                OrderType.LIMIT
+        )).thenReturn(entryExecutionResponse());
+
+        service.evaluatePendingOrder(20L);
+
+        assertThat(parent.getStatus()).isEqualTo(TriggerOrderStatus.TRIGGERED);
+        assertThat(child.getStatus()).isEqualTo(TriggerOrderStatus.PENDING);
+        assertThat(child.getTargetPositionId()).isEqualTo(1L);
+    }
+
     private void mockDefaultAccount() {
         Account account = org.mockito.Mockito.mock(Account.class);
         when(account.getId()).thenReturn(100L);
@@ -291,5 +361,46 @@ class TriggerOrderServiceExitOrderTest {
                 now,
                 execution
         );
+    }
+
+    private OrderResultResponse entryExecutionResponse() {
+        LocalDateTime now = LocalDateTime.of(2026, 7, 1, 12, 0);
+        return new OrderResultResponse(
+                new OrderSummaryResponse(
+                        77L,
+                        "USD/JPY",
+                        "BUY",
+                        "LIMIT",
+                        new BigDecimal("1000"),
+                        "EXECUTED",
+                        "TRIGGER",
+                        now
+                ),
+                new TradeSummaryResponse(
+                        78L,
+                        77L,
+                        "USD/JPY",
+                        "BUY",
+                        new BigDecimal("1000"),
+                        new BigDecimal("154.500"),
+                        now,
+                        "OPEN",
+                        1L,
+                        null
+                )
+        );
+    }
+
+    private static class SaveTriggerOrderAnswer implements org.mockito.stubbing.Answer<TriggerOrder> {
+        private long nextId = 100L;
+
+        @Override
+        public TriggerOrder answer(org.mockito.invocation.InvocationOnMock invocation) {
+            TriggerOrder order = invocation.getArgument(0);
+            if (order.getId() == null) {
+                ReflectionTestUtils.setField(order, "id", nextId++);
+            }
+            return order;
+        }
     }
 }
