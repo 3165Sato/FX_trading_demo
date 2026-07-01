@@ -1,6 +1,7 @@
 package com.example.fx.demo.backend.position;
 
-import com.example.fx.demo.backend.margin.FixedMarginRateEvaluationPolicy;
+import com.example.fx.demo.backend.position.domain.Position;
+import com.example.fx.demo.backend.margin.policy.FixedMarginRateEvaluationPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

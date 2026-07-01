@@ -1,5 +1,8 @@
 package com.example.fx.demo.backend.position;
 
+import com.example.fx.demo.backend.position.calculation.PositionValuationCalculator;
+import com.example.fx.demo.backend.position.model.CurrencyPairScale;
+import com.example.fx.demo.backend.position.model.PositionSnapshot;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
 import org.junit.jupiter.api.Test;
 

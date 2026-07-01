@@ -1,5 +1,10 @@
 package com.example.fx.demo.backend.position;
 
+import com.example.fx.demo.backend.position.calculation.PositionNettingCalculator;
+import com.example.fx.demo.backend.position.model.CurrencyPairScale;
+import com.example.fx.demo.backend.position.model.PositionCalculationResult;
+import com.example.fx.demo.backend.position.model.PositionSnapshot;
+import com.example.fx.demo.backend.position.model.PositionTradeInput;
 import com.example.fx.demo.backend.common.enums.OrderSide;
 import org.junit.jupiter.api.Test;
 

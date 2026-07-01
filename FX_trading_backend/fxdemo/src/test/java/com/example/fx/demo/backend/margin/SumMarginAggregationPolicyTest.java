@@ -1,5 +1,6 @@
 package com.example.fx.demo.backend.margin;
 
+import com.example.fx.demo.backend.margin.policy.SumMarginAggregationPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
