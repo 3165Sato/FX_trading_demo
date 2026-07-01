@@ -21,6 +21,7 @@ import {
   placePositionExitOrder,
   placePositionOcoOrder,
   placeIfdOrder,
+  placeIfoOrder,
   placePendingOrder,
   placeMarketOrder,
   triggerNewsEvent,
@@ -78,6 +79,8 @@ export function MarketMonitorDashboard() {
   const [triggerPrice, setTriggerPrice] = useState("");
   const [ifdExitType, setIfdExitType] = useState<ExitOrderType>("TP");
   const [ifdExitPrice, setIfdExitPrice] = useState("");
+  const [ifoTakeProfitPrice, setIfoTakeProfitPrice] = useState("");
+  const [ifoStopLossPrice, setIfoStopLossPrice] = useState("");
   const [rateChanges, setRateChanges] = useState<Record<string, number>>({});
   const [ratesLoading, setRatesLoading] = useState(true);
   const [ticksLoading, setTicksLoading] = useState(true);
@@ -101,6 +104,7 @@ export function MarketMonitorDashboard() {
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [submittingOrderSide, setSubmittingOrderSide] = useState<OrderSide | null>(null);
   const [submittingIfdSide, setSubmittingIfdSide] = useState<OrderSide | null>(null);
+  const [submittingIfoSide, setSubmittingIfoSide] = useState<OrderSide | null>(null);
   const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
   const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
   const [exitOrderDrafts, setExitOrderDrafts] = useState<Record<number, Partial<Record<ExitOrderType, string>>>>({});
@@ -550,6 +554,52 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const submitIfoOrder = async (side: OrderSide) => {
+    const quantity = Number(orderQuantity);
+    const entryPrice = Number(triggerPrice);
+    const tpPrice = Number(ifoTakeProfitPrice);
+    const slPrice = Number(ifoStopLossPrice);
+    if (orderType === "MARKET") {
+      setOrderError("IFO entry must be LIMIT or STOP.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setOrderError("Quantity must be greater than zero.");
+      return;
+    }
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+      setOrderError("Entry trigger price must be greater than zero.");
+      return;
+    }
+    if (!Number.isFinite(tpPrice) || tpPrice <= 0 || !Number.isFinite(slPrice) || slPrice <= 0) {
+      setOrderError("IFO TP and SL prices must be greater than zero.");
+      return;
+    }
+
+    setSubmittingIfoSide(side);
+    try {
+      const result = await placeIfoOrder(
+        tradingActivePair,
+        side,
+        orderType,
+        quantity,
+        entryPrice,
+        tpPrice,
+        slPrice,
+      );
+      setLastOrderMessage(
+        `IFO ${result.entry.orderType} ${result.entry.side} ${formatQuantity(result.entry.quantity)} ${result.entry.currencyPair} -> OCO TP ${formatPrice(tpPrice, result.entry.currencyPair)} / SL ${formatPrice(slPrice, result.entry.currencyPair)}`,
+      );
+      setPendingOrders((current) => [result.entry, ...result.exits, ...current].slice(0, ORDER_LIMIT));
+      setOrderError(null);
+      void loadPendingOrders();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setSubmittingIfoSide(null);
+    }
+  };
+
   const cancelSelectedPendingOrder = async (id: number) => {
     setCancelingPendingOrderId(id);
     try {
@@ -734,6 +784,8 @@ export function MarketMonitorDashboard() {
             exitOrderDrafts={exitOrderDrafts}
             ifdExitPrice={ifdExitPrice}
             ifdExitType={ifdExitType}
+            ifoStopLossPrice={ifoStopLossPrice}
+            ifoTakeProfitPrice={ifoTakeProfitPrice}
             orderError={orderError}
             orderQuantity={orderQuantity}
             orderType={orderType}
@@ -749,6 +801,7 @@ export function MarketMonitorDashboard() {
             triggerPrice={triggerPrice}
             submittingExitOrder={submittingExitOrder}
             submittingIfdSide={submittingIfdSide}
+            submittingIfoSide={submittingIfoSide}
             submittingOcoPositionId={submittingOcoPositionId}
             onCancelPendingOrder={cancelSelectedPendingOrder}
             onCancelExitOrder={cancelSelectedExitOrder}
@@ -757,12 +810,15 @@ export function MarketMonitorDashboard() {
             onExitOrderDraftChange={updateExitOrderDraft}
             onIfdExitPriceChange={setIfdExitPrice}
             onIfdExitTypeChange={setIfdExitType}
+            onIfoStopLossPriceChange={setIfoStopLossPrice}
+            onIfoTakeProfitPriceChange={setIfoTakeProfitPrice}
             onQuantityChange={setOrderQuantity}
             onOrderTypeChange={setOrderType}
             onSelectPair={selectTradingCurrencyPair}
             onSubmitOrder={submitMarketOrder}
             onSubmitExitOrder={submitPositionExitOrder}
             onSubmitIfdOrder={submitIfdOrder}
+            onSubmitIfoOrder={submitIfoOrder}
             onSubmitOcoOrder={submitPositionOcoOrder}
             onTriggerPriceChange={setTriggerPrice}
             closingPositionId={closingPositionId}
@@ -975,6 +1031,8 @@ function TradingScreen({
   exitOrderDrafts,
   ifdExitPrice,
   ifdExitType,
+  ifoStopLossPrice,
+  ifoTakeProfitPrice,
   orderError,
   orderQuantity,
   orderType,
@@ -990,6 +1048,7 @@ function TradingScreen({
   triggerPrice,
   submittingExitOrder,
   submittingIfdSide,
+  submittingIfoSide,
   submittingOcoPositionId,
   onCancelExitOrder,
   onCancelOcoOrder,
@@ -998,12 +1057,15 @@ function TradingScreen({
   onExitOrderDraftChange,
   onIfdExitPriceChange,
   onIfdExitTypeChange,
+  onIfoStopLossPriceChange,
+  onIfoTakeProfitPriceChange,
   onQuantityChange,
   onOrderTypeChange,
   onSelectPair,
   onSubmitOrder,
   onSubmitExitOrder,
   onSubmitIfdOrder,
+  onSubmitIfoOrder,
   onSubmitOcoOrder,
   onTriggerPriceChange,
 }: {
@@ -1016,6 +1078,8 @@ function TradingScreen({
   exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
   ifdExitPrice: string;
   ifdExitType: ExitOrderType;
+  ifoStopLossPrice: string;
+  ifoTakeProfitPrice: string;
   orderError: string | null;
   orderQuantity: string;
   orderType: OrderType;
@@ -1031,6 +1095,7 @@ function TradingScreen({
   triggerPrice: string;
   submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
   submittingIfdSide: OrderSide | null;
+  submittingIfoSide: OrderSide | null;
   submittingOcoPositionId: number | null;
   onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelOcoOrder: (positionId: number, groupId: string) => void;
@@ -1039,12 +1104,15 @@ function TradingScreen({
   onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
   onIfdExitPriceChange: (price: string) => void;
   onIfdExitTypeChange: (type: ExitOrderType) => void;
+  onIfoStopLossPriceChange: (price: string) => void;
+  onIfoTakeProfitPriceChange: (price: string) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSelectPair: (currencyPair: string) => void;
   onSubmitOrder: (side: OrderSide) => void;
   onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
   onSubmitIfdOrder: (side: OrderSide) => void;
+  onSubmitIfoOrder: (side: OrderSide) => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
@@ -1066,19 +1134,25 @@ function TradingScreen({
             error={orderError}
             ifdExitPrice={ifdExitPrice}
             ifdExitType={ifdExitType}
+            ifoStopLossPrice={ifoStopLossPrice}
+            ifoTakeProfitPrice={ifoTakeProfitPrice}
             lastMessage={lastOrderMessage}
             orderQuantity={orderQuantity}
             orderType={orderType}
             rate={selectedRate}
             submittingIfdSide={submittingIfdSide}
+            submittingIfoSide={submittingIfoSide}
             submittingSide={submittingOrderSide}
             triggerPrice={triggerPrice}
             onIfdExitPriceChange={onIfdExitPriceChange}
             onIfdExitTypeChange={onIfdExitTypeChange}
+            onIfoStopLossPriceChange={onIfoStopLossPriceChange}
+            onIfoTakeProfitPriceChange={onIfoTakeProfitPriceChange}
             onQuantityChange={onQuantityChange}
             onOrderTypeChange={onOrderTypeChange}
             onSubmit={onSubmitOrder}
             onSubmitIfd={onSubmitIfdOrder}
+            onSubmitIfo={onSubmitIfoOrder}
             onTriggerPriceChange={onTriggerPriceChange}
           />
         </div>
@@ -1236,38 +1310,50 @@ function MarketOrderPanel({
   error,
   ifdExitPrice,
   ifdExitType,
+  ifoStopLossPrice,
+  ifoTakeProfitPrice,
   lastMessage,
   orderQuantity,
   orderType,
   rate,
   submittingIfdSide,
+  submittingIfoSide,
   submittingSide,
   triggerPrice,
   onIfdExitPriceChange,
   onIfdExitTypeChange,
+  onIfoStopLossPriceChange,
+  onIfoTakeProfitPriceChange,
   onQuantityChange,
   onOrderTypeChange,
   onSubmit,
   onSubmitIfd,
+  onSubmitIfo,
   onTriggerPriceChange,
 }: {
   activePair: string;
   error: string | null;
   ifdExitPrice: string;
   ifdExitType: ExitOrderType;
+  ifoStopLossPrice: string;
+  ifoTakeProfitPrice: string;
   lastMessage: string | null;
   orderQuantity: string;
   orderType: OrderType;
   rate?: MarketRate;
   submittingIfdSide: OrderSide | null;
+  submittingIfoSide: OrderSide | null;
   submittingSide: OrderSide | null;
   triggerPrice: string;
   onIfdExitPriceChange: (price: string) => void;
   onIfdExitTypeChange: (type: ExitOrderType) => void;
+  onIfoStopLossPriceChange: (price: string) => void;
+  onIfoTakeProfitPriceChange: (price: string) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSubmit: (side: OrderSide) => void;
   onSubmitIfd: (side: OrderSide) => void;
+  onSubmitIfo: (side: OrderSide) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
   return (
@@ -1380,6 +1466,56 @@ function MarketOrderPanel({
                 currencyPair={activePair}
                 labelPrefix="IFD"
                 onSubmit={onSubmitIfd}
+              />
+            </div>
+          </div>
+        )}
+        {orderType !== "MARKET" && (
+          <div className="border border-[#262d38] bg-[#0d1117] p-3">
+            <div className="mb-3">
+              <span className="text-[10px] uppercase text-[#768390]">IFO OCO exit pair</span>
+              <div className="mt-1 font-mono text-[10px] leading-5 text-[#768390]">
+                Entry fill creates TP and SL as one OCO group. If either direction is invalid at fill time, both expire.
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-[10px] uppercase text-[#768390]">TP price</span>
+                <input
+                  value={ifoTakeProfitPrice}
+                  onChange={(event) => onIfoTakeProfitPriceChange(event.target.value)}
+                  inputMode="decimal"
+                  className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[10px] uppercase text-[#768390]">SL price</span>
+                <input
+                  value={ifoStopLossPrice}
+                  onChange={(event) => onIfoStopLossPriceChange(event.target.value)}
+                  inputMode="decimal"
+                  className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+                />
+              </label>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <OrderButton
+                disabled={submittingIfoSide !== null || submittingIfdSide !== null || submittingSide !== null || !rate}
+                loading={submittingIfoSide === "SELL"}
+                price={rate?.bid}
+                side="SELL"
+                currencyPair={activePair}
+                labelPrefix="IFO"
+                onSubmit={onSubmitIfo}
+              />
+              <OrderButton
+                disabled={submittingIfoSide !== null || submittingIfdSide !== null || submittingSide !== null || !rate}
+                loading={submittingIfoSide === "BUY"}
+                price={rate?.ask}
+                side="BUY"
+                currencyPair={activePair}
+                labelPrefix="IFO"
+                onSubmit={onSubmitIfo}
               />
             </div>
           </div>
@@ -1836,7 +1972,7 @@ function PendingOrderRow({
 }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
   const typeLabel = order.exitType ? `${order.exitType}` : order.orderType;
-  const pairLabel = order.parentOrderId ? `IFD #${order.parentOrderId}` : order.currencyPair;
+  const pairLabel = order.parentOrderId ? `${order.ocoGroupId ? "IFO" : "IFD"} #${order.parentOrderId}` : order.currencyPair;
   return (
     <div className="grid grid-cols-[76px_62px_62px_1fr_72px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
       <span className="truncate text-[#e6edf3]">{pairLabel}</span>

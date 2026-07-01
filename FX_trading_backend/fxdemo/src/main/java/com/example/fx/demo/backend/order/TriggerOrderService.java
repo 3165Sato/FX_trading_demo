@@ -18,6 +18,8 @@ import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
 import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
 import com.example.fx.demo.backend.order.dto.IfdOrderResponse;
+import com.example.fx.demo.backend.order.dto.IfoOrderRequest;
+import com.example.fx.demo.backend.order.dto.IfoOrderResponse;
 import com.example.fx.demo.backend.position.Position;
 import com.example.fx.demo.backend.position.PositionRepository;
 import com.example.fx.demo.backend.position.PositionService;
@@ -38,6 +40,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -115,6 +118,14 @@ public class TriggerOrderService {
         return accountTradeLockService.withAccountLock(
                 DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
                 () -> placeIfdOrderLocked(request)
+        );
+    }
+
+    @Transactional
+    public IfoOrderResponse placeIfoOrder(IfoOrderRequest request) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> placeIfoOrderLocked(request)
         );
     }
 
@@ -288,6 +299,65 @@ public class TriggerOrderService {
         TriggerOrder savedExit = triggerOrderRepository.save(exitOrder);
 
         return new IfdOrderResponse(toResponse(savedEntry), toResponse(savedExit));
+    }
+
+    private IfoOrderResponse placeIfoOrderLocked(IfoOrderRequest request) {
+        if (request.entry() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFOの新規注文を指定してください。");
+        }
+        if (request.oco() == null || request.oco().tp() == null || request.oco().tp().triggerPrice() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFOのTP価格を指定してください。");
+        }
+        if (request.oco().sl() == null || request.oco().sl().triggerPrice() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFOのSL価格を指定してください。");
+        }
+        validateBasicRequest(request.entry());
+
+        Account account = accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+        CurrencyPair currencyPair = currencyPairRepository.findBySymbol(request.entry().currencyPair())
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Currency pair not found: " + request.entry().currencyPair()
+                ));
+        MarketRate marketRate = marketRateRepository.findByCurrencyPair(currencyPair)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Latest market rate is not available: " + currencyPair.getSymbol()
+                ));
+
+        BigDecimal quantity = request.entry().quantity().setScale(currencyPair.getQuantityScale(), RoundingMode.HALF_UP);
+        BigDecimal entryTriggerPrice = request.entry().triggerPrice().setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        BigDecimal tpPrice = request.oco().tp().triggerPrice().setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        BigDecimal slPrice = request.oco().sl().triggerPrice().setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        if (tpPrice.compareTo(BigDecimal.ZERO) <= 0 || slPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "IFOのTP/SL価格は0より大きい値を指定してください。");
+        }
+        validateTriggerDirection(request.entry().side(), request.entry().orderType(), entryTriggerPrice, marketRate);
+
+        TriggerOrder entryOrder = new TriggerOrder();
+        entryOrder.setAccountId(account.getId());
+        entryOrder.setCurrencyPair(currencyPair.getSymbol());
+        entryOrder.setSide(request.entry().side());
+        entryOrder.setOrderType(request.entry().orderType());
+        entryOrder.setQuantity(quantity);
+        entryOrder.setTriggerPrice(entryTriggerPrice);
+        entryOrder.setStatus(TriggerOrderStatus.PENDING);
+        entryOrder.setPurpose(TriggerOrderPurpose.ENTRY);
+        TriggerOrder savedEntry = triggerOrderRepository.save(entryOrder);
+
+        String ocoGroupId = UUID.randomUUID().toString();
+        List<TriggerOrder> savedExits = triggerOrderRepository.saveAll(List.of(
+                createUnboundExitOrder(account, currencyPair, request.entry().side(), quantity, tpPrice, ExitOrderType.TP, savedEntry.getId(), ocoGroupId),
+                createUnboundExitOrder(account, currencyPair, request.entry().side(), quantity, slPrice, ExitOrderType.SL, savedEntry.getId(), ocoGroupId)
+        ));
+
+        return new IfoOrderResponse(
+                toResponse(savedEntry),
+                ocoGroupId,
+                savedExits.stream().map(this::toResponse).toList()
+        );
     }
 
     private PositionOcoOrderResponse placeOcoOrderLocked(Long positionId, PositionOcoOrderRequest request) {
@@ -616,6 +686,31 @@ public class TriggerOrderService {
         return order;
     }
 
+    private TriggerOrder createUnboundExitOrder(
+            Account account,
+            CurrencyPair currencyPair,
+            OrderSide entrySide,
+            BigDecimal quantity,
+            BigDecimal triggerPrice,
+            ExitOrderType exitType,
+            Long parentOrderId,
+            String ocoGroupId
+    ) {
+        TriggerOrder order = new TriggerOrder();
+        order.setAccountId(account.getId());
+        order.setCurrencyPair(currencyPair.getSymbol());
+        order.setSide(closeSide(entrySide == OrderSide.BUY ? PositionSide.LONG : PositionSide.SHORT));
+        order.setOrderType(exitType == ExitOrderType.TP ? OrderType.LIMIT : OrderType.STOP);
+        order.setQuantity(quantity);
+        order.setTriggerPrice(triggerPrice);
+        order.setStatus(TriggerOrderStatus.PENDING);
+        order.setPurpose(TriggerOrderPurpose.EXIT);
+        order.setExitType(exitType);
+        order.setParentOrderId(parentOrderId);
+        order.setOcoGroupId(ocoGroupId);
+        return order;
+    }
+
     private void bindIfdChildren(TriggerOrder parentOrder, Long positionId) {
         if (!isEntryOrder(parentOrder) || positionId == null) {
             return;
@@ -642,7 +737,17 @@ public class TriggerOrderService {
         MarketRate marketRate = currencyPair == null
                 ? null
                 : marketRateRepository.findByCurrencyPair(currencyPair).orElse(null);
+        List<String> invalidOcoGroupIds = findInvalidOcoGroupIds(children, position, currencyPair, marketRate);
         for (TriggerOrder child : children) {
+            if (hasOcoGroup(child) && invalidOcoGroupIds.contains(child.getOcoGroupId())) {
+                child.setStatus(TriggerOrderStatus.EXPIRED);
+                child.setRejectionReason("IFO親注文の約定時点でTP/SLのいずれかの価格方向が不正なため、OCOごと失効しました。");
+            }
+        }
+        for (TriggerOrder child : children) {
+            if (hasOcoGroup(child) && invalidOcoGroupIds.contains(child.getOcoGroupId())) {
+                continue;
+            }
             if (currencyPair == null || marketRate == null || child.getExitType() == null) {
                 child.setStatus(TriggerOrderStatus.EXPIRED);
                 child.setRejectionReason("IFD子注文を建玉へバインドできないため失効しました。");
@@ -663,6 +768,54 @@ public class TriggerOrderService {
             }
         }
         triggerOrderRepository.saveAll(children);
+    }
+
+    private List<String> findInvalidOcoGroupIds(
+            List<TriggerOrder> children,
+            Position position,
+            CurrencyPair currencyPair,
+            MarketRate marketRate
+    ) {
+        List<String> invalidGroupIds = new ArrayList<>();
+        for (TriggerOrder child : children) {
+            if (!hasOcoGroup(child) || invalidGroupIds.contains(child.getOcoGroupId())) {
+                continue;
+            }
+            List<TriggerOrder> groupChildren = children.stream()
+                    .filter(candidate -> Objects.equals(candidate.getOcoGroupId(), child.getOcoGroupId()))
+                    .toList();
+            boolean hasTakeProfit = groupChildren.stream().anyMatch(candidate -> candidate.getExitType() == ExitOrderType.TP);
+            boolean hasStopLoss = groupChildren.stream().anyMatch(candidate -> candidate.getExitType() == ExitOrderType.SL);
+            boolean groupValid = groupChildren.size() == 2
+                    && hasTakeProfit
+                    && hasStopLoss
+                    && groupChildren.stream().allMatch(candidate -> canBindChild(candidate, position, currencyPair, marketRate));
+            if (!groupValid) {
+                invalidGroupIds.add(child.getOcoGroupId());
+            }
+        }
+        return invalidGroupIds;
+    }
+
+    private boolean canBindChild(
+            TriggerOrder child,
+            Position position,
+            CurrencyPair currencyPair,
+            MarketRate marketRate
+    ) {
+        if (currencyPair == null || marketRate == null || child.getExitType() == null) {
+            return false;
+        }
+        try {
+            validateExitDirection(position, child.getExitType(), child.getTriggerPrice(), marketRate);
+            return true;
+        } catch (ResponseStatusException exception) {
+            return false;
+        }
+    }
+
+    private boolean hasOcoGroup(TriggerOrder order) {
+        return order.getOcoGroupId() != null && !order.getOcoGroupId().isBlank();
     }
 
     private void cancelIfdChildren(TriggerOrder parentOrder) {

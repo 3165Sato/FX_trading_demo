@@ -22,7 +22,9 @@ import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderLegRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
 import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
+import com.example.fx.demo.backend.order.dto.IfoOrderRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
+import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
 import com.example.fx.demo.backend.trade.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.TradeExecutionService;
 import com.example.fx.demo.backend.trade.dto.OrderResultResponse;
@@ -248,6 +250,41 @@ class TriggerOrderServiceExitOrderTest {
     }
 
     @Test
+    void createsIfoParentAndUnboundOcoExitChildren() {
+        mockDefaultAccount();
+        mockCurrencyPair();
+        mockMarketRate("155.120", "155.123");
+        when(triggerOrderRepository.save(any(TriggerOrder.class))).thenAnswer(new SaveTriggerOrderAnswer());
+        when(triggerOrderRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = service.placeIfoOrder(new IfoOrderRequest(
+                new PendingOrderRequest(
+                        "USD/JPY",
+                        OrderSide.BUY,
+                        OrderType.LIMIT,
+                        new BigDecimal("1000"),
+                        new BigDecimal("154.500")
+                ),
+                new PositionOcoOrderRequest(
+                        new PositionOcoOrderLegRequest(new BigDecimal("156.000")),
+                        new PositionOcoOrderLegRequest(new BigDecimal("154.000"))
+                )
+        ));
+
+        assertThat(response.entry().purpose()).isEqualTo("ENTRY");
+        assertThat(response.ocoGroupId()).isNotBlank();
+        assertThat(response.exits()).hasSize(2);
+        assertThat(response.exits()).allSatisfy(order -> {
+            assertThat(order.purpose()).isEqualTo("EXIT");
+            assertThat(order.parentOrderId()).isEqualTo(response.entry().id());
+            assertThat(order.targetPositionId()).isNull();
+            assertThat(order.ocoGroupId()).isEqualTo(response.ocoGroupId());
+        });
+        assertThat(response.exits().stream().map(PendingOrderResponse::exitType).toList())
+                .containsExactlyInAnyOrder("TP", "SL");
+    }
+
+    @Test
     void bindsIfdExitChildWhenParentEntryTriggers() {
         TriggerOrder parent = new TriggerOrder();
         ReflectionTestUtils.setField(parent, "id", 20L);
@@ -289,6 +326,69 @@ class TriggerOrderServiceExitOrderTest {
         assertThat(parent.getStatus()).isEqualTo(TriggerOrderStatus.TRIGGERED);
         assertThat(child.getStatus()).isEqualTo(TriggerOrderStatus.PENDING);
         assertThat(child.getTargetPositionId()).isEqualTo(1L);
+    }
+
+    @Test
+    void bindsIfoOcoChildrenWhenParentEntryTriggers() {
+        TriggerOrder parent = new TriggerOrder();
+        ReflectionTestUtils.setField(parent, "id", 30L);
+        parent.setPurpose(TriggerOrderPurpose.ENTRY);
+        parent.setCurrencyPair("USD/JPY");
+        parent.setSide(OrderSide.BUY);
+        parent.setOrderType(OrderType.LIMIT);
+        parent.setQuantity(new BigDecimal("1000"));
+        parent.setTriggerPrice(new BigDecimal("154.500"));
+        parent.setStatus(TriggerOrderStatus.PENDING);
+
+        TriggerOrder takeProfit = new TriggerOrder();
+        ReflectionTestUtils.setField(takeProfit, "id", 31L);
+        takeProfit.setPurpose(TriggerOrderPurpose.EXIT);
+        takeProfit.setExitType(ExitOrderType.TP);
+        takeProfit.setParentOrderId(30L);
+        takeProfit.setCurrencyPair("USD/JPY");
+        takeProfit.setSide(OrderSide.SELL);
+        takeProfit.setOrderType(OrderType.LIMIT);
+        takeProfit.setQuantity(new BigDecimal("1000"));
+        takeProfit.setTriggerPrice(new BigDecimal("156.000"));
+        takeProfit.setStatus(TriggerOrderStatus.PENDING);
+        takeProfit.setOcoGroupId("ifo-oco-1");
+
+        TriggerOrder stopLoss = new TriggerOrder();
+        ReflectionTestUtils.setField(stopLoss, "id", 32L);
+        stopLoss.setPurpose(TriggerOrderPurpose.EXIT);
+        stopLoss.setExitType(ExitOrderType.SL);
+        stopLoss.setParentOrderId(30L);
+        stopLoss.setCurrencyPair("USD/JPY");
+        stopLoss.setSide(OrderSide.SELL);
+        stopLoss.setOrderType(OrderType.STOP);
+        stopLoss.setQuantity(new BigDecimal("1000"));
+        stopLoss.setTriggerPrice(new BigDecimal("154.000"));
+        stopLoss.setStatus(TriggerOrderStatus.PENDING);
+        stopLoss.setOcoGroupId("ifo-oco-1");
+
+        when(triggerOrderRepository.findById(30L)).thenReturn(Optional.of(parent));
+        when(triggerOrderRepository.findByParentOrderIdAndStatusInOrderByCreatedAtAsc(
+                30L,
+                List.of(TriggerOrderStatus.PENDING, TriggerOrderStatus.WAITING)
+        )).thenReturn(List.of(takeProfit, stopLoss));
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        mockMarketRate("154.497", "154.500");
+        when(tradeExecutionService.executeTriggeredOrder(
+                "USD/JPY",
+                OrderSide.BUY,
+                new BigDecimal("1000"),
+                OrderType.LIMIT
+        )).thenReturn(entryExecutionResponse());
+
+        service.evaluatePendingOrder(30L);
+
+        assertThat(parent.getStatus()).isEqualTo(TriggerOrderStatus.TRIGGERED);
+        assertThat(takeProfit.getStatus()).isEqualTo(TriggerOrderStatus.PENDING);
+        assertThat(stopLoss.getStatus()).isEqualTo(TriggerOrderStatus.PENDING);
+        assertThat(takeProfit.getTargetPositionId()).isEqualTo(1L);
+        assertThat(stopLoss.getTargetPositionId()).isEqualTo(1L);
+        assertThat(takeProfit.getOcoGroupId()).isEqualTo(stopLoss.getOcoGroupId());
     }
 
     private void mockDefaultAccount() {

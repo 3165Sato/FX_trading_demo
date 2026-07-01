@@ -119,6 +119,12 @@ export type IfdOrder = {
   exit: PendingOrder;
 };
 
+export type IfoOrder = {
+  entry: PendingOrder;
+  ocoGroupId: string;
+  exits: PendingOrder[];
+};
+
 export type PositionExitOrder = {
   id: number;
   type: ExitOrderType | null;
@@ -331,6 +337,39 @@ export async function placeIfdOrder(
       exit: {
         type: exitType,
         triggerPrice: exitTriggerPrice,
+      },
+    }),
+  });
+}
+
+export async function placeIfoOrder(
+  currencyPair: string,
+  side: OrderSide,
+  orderType: "LIMIT" | "STOP",
+  quantity: number,
+  entryTriggerPrice: number,
+  takeProfitPrice: number,
+  stopLossPrice: number,
+): Promise<IfoOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders/ifo`;
+
+  return fetchWithRetry<IfoOrder>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      entry: {
+        currencyPair,
+        side,
+        orderType,
+        quantity,
+        triggerPrice: entryTriggerPrice,
+      },
+      oco: {
+        tp: {
+          triggerPrice: takeProfitPrice,
+        },
+        sl: {
+          triggerPrice: stopLossPrice,
+        },
       },
     }),
   });

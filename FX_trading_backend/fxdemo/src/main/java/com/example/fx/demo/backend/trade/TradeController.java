@@ -3,6 +3,8 @@ package com.example.fx.demo.backend.trade;
 import com.example.fx.demo.backend.order.TriggerOrderService;
 import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
 import com.example.fx.demo.backend.order.dto.IfdOrderResponse;
+import com.example.fx.demo.backend.order.dto.IfoOrderRequest;
+import com.example.fx.demo.backend.order.dto.IfoOrderResponse;
 import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
 import com.example.fx.demo.backend.trade.dto.MarketOrderRequest;
@@ -44,6 +46,11 @@ public class TradeController {
     @PostMapping("/orders/ifd")
     public IfdOrderResponse placeIfdOrder(@RequestBody IfdOrderRequest request) {
         return triggerOrderService.placeIfdOrder(request);
+    }
+
+    @PostMapping("/orders/ifo")
+    public IfoOrderResponse placeIfoOrder(@RequestBody IfoOrderRequest request) {
+        return triggerOrderService.placeIfoOrder(request);
     }
 
     @PostMapping("/orders/pending/{id}/cancel")
