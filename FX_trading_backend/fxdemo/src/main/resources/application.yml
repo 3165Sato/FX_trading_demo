@@ -67,3 +67,6 @@ demofx:
         lookbackSeconds: 60
         baselineLookbackSeconds: 600
         baselineMultiplier: 3.0
+  equityHistory:
+    enabled: true
+    intervalSeconds: 5

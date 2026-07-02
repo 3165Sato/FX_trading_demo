@@ -8,6 +8,7 @@ import {
   cancelPendingOrder,
   closePosition,
   fetchAccountSummary,
+  fetchEquityHistory,
   fetchLatestMarketRates,
   fetchMarketAlerts,
   fetchMarketRateTicks,
@@ -27,6 +28,7 @@ import {
   triggerNewsEvent,
   type AccountSummary,
   type AlertSeverity,
+  type EquitySnapshot,
   type ExitOrderType,
   type MarketAlert,
   type MarketRate,
@@ -42,6 +44,7 @@ import {
   type SpreadStats,
   type TradeSummary,
 } from "../../lib/marketRateTicks";
+import { EquityCurvePanel, type EquityHistoryRange } from "./EquityCurvePanel";
 import { MarketRateChart } from "./MarketRateChart";
 import { SpreadMonitorCard } from "./SpreadMonitorCard";
 
@@ -52,6 +55,8 @@ const NEWS_EVENT_LIMIT = 10;
 const ALERT_LIMIT = 50;
 const TRADE_LIMIT = 50;
 const ORDER_LIMIT = 50;
+const EQUITY_HISTORY_DEFAULT_LIMIT = 300;
+const EQUITY_HISTORY_MAX_LIMIT = 1000;
 const SCREEN_STORAGE_KEY = "demofx.screen";
 const LEGACY_PAIR_STORAGE_KEY = "demofx.selectedPair";
 const MONITOR_PAIR_STORAGE_KEY = "demofx.monitorSelectedPair";
@@ -70,6 +75,8 @@ export function MarketMonitorDashboard() {
   const [positions, setPositions] = useState<PositionSummary[]>([]);
   const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
   const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
+  const [equityHistory, setEquityHistory] = useState<EquitySnapshot[]>([]);
+  const [equityHistoryRange, setEquityHistoryRange] = useState<EquityHistoryRange>("5m");
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
@@ -94,6 +101,8 @@ export function MarketMonitorDashboard() {
   const [positionsError, setPositionsError] = useState<string | null>(null);
   const [pnlSummaryError, setPnlSummaryError] = useState<string | null>(null);
   const [accountSummaryError, setAccountSummaryError] = useState<string | null>(null);
+  const [equityHistoryError, setEquityHistoryError] = useState<string | null>(null);
+  const [equityHistoryLoading, setEquityHistoryLoading] = useState(true);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
@@ -319,6 +328,19 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadEquityHistory = useCallback(async () => {
+    try {
+      const request = equityHistoryRequest(equityHistoryRange);
+      const nextHistory = await fetchEquityHistory(request.limit, request.from);
+      setEquityHistory(nextHistory);
+      setEquityHistoryError(null);
+    } catch (error) {
+      setEquityHistoryError(getErrorMessage(error));
+    } finally {
+      setEquityHistoryLoading(false);
+    }
+  }, [equityHistoryRange]);
+
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadRates, 0);
     const intervalId = window.setInterval(loadRates, 1000);
@@ -364,6 +386,15 @@ export function MarketMonitorDashboard() {
   }, [loadAccountSummary, loadOrders, loadPendingOrders, loadPnlSummary, loadPositions, loadTrades]);
 
   useEffect(() => {
+    const initialTimeoutId = window.setTimeout(loadEquityHistory, 0);
+    const intervalId = window.setInterval(loadEquityHistory, 5000);
+    return () => {
+      window.clearTimeout(initialTimeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [loadEquityHistory]);
+
+  useEffect(() => {
     const loadSelectedMarketData = () => {
       void loadTicks();
       void loadSpreadStats();
@@ -396,6 +427,16 @@ export function MarketMonitorDashboard() {
     setTradingSelectedPair(currencyPair);
     setOrderError(null);
     setLastOrderMessage(null);
+  };
+
+  const selectEquityHistoryRange = (range: EquityHistoryRange) => {
+    if (range === equityHistoryRange) {
+      return;
+    }
+    setEquityHistoryRange(range);
+    setEquityHistory([]);
+    setEquityHistoryLoading(true);
+    setEquityHistoryError(null);
   };
 
   const monitoredRates = useMemo(
@@ -458,6 +499,7 @@ export function MarketMonitorDashboard() {
     void loadPositions();
     void loadPnlSummary();
     void loadAccountSummary();
+    void loadEquityHistory();
     void loadNewsEvents();
   };
 
@@ -760,6 +802,10 @@ export function MarketMonitorDashboard() {
             activeAlerts={activeAlerts.length}
             activePair={monitorActivePair}
             alerts={alerts}
+            equityHistory={equityHistory}
+            equityHistoryError={equityHistoryError}
+            equityHistoryLoading={equityHistoryLoading}
+            equityHistoryRange={equityHistoryRange}
             monitoredRates={monitoredRates}
             newsEvents={newsEvents}
             newsSubmittingDirection={newsSubmittingDirection}
@@ -772,6 +818,8 @@ export function MarketMonitorDashboard() {
             ticks={ticks}
             ticksLoading={ticksLoading}
             onSelectPair={selectMonitorCurrencyPair}
+            onSelectEquityHistoryRange={selectEquityHistoryRange}
+            onRetryEquityHistory={loadEquityHistory}
             onTriggerNews={triggerSelectedNewsEvent}
           />
         ) : (
@@ -929,6 +977,10 @@ function MonitorScreen({
   activeAlerts,
   activePair,
   alerts,
+  equityHistory,
+  equityHistoryError,
+  equityHistoryLoading,
+  equityHistoryRange,
   monitoredRates,
   newsEvents,
   newsSubmittingDirection,
@@ -941,11 +993,17 @@ function MonitorScreen({
   ticks,
   ticksLoading,
   onSelectPair,
+  onSelectEquityHistoryRange,
+  onRetryEquityHistory,
   onTriggerNews,
 }: {
   activeAlerts: number;
   activePair: string;
   alerts: MarketAlert[];
+  equityHistory: EquitySnapshot[];
+  equityHistoryError: string | null;
+  equityHistoryLoading: boolean;
+  equityHistoryRange: EquityHistoryRange;
   monitoredRates: MarketRate[];
   newsEvents: NewsEvent[];
   newsSubmittingDirection: NewsDirection | null;
@@ -958,6 +1016,8 @@ function MonitorScreen({
   ticks: MarketRateTick[];
   ticksLoading: boolean;
   onSelectPair: (currencyPair: string) => void;
+  onSelectEquityHistoryRange: (range: EquityHistoryRange) => void;
+  onRetryEquityHistory: () => void;
   onTriggerNews: (direction: NewsDirection) => void;
 }) {
   return (
@@ -985,7 +1045,7 @@ function MonitorScreen({
         </div>
       </section>
 
-      <div className="flex min-w-0 flex-col gap-4 xl:min-h-0">
+      <div className="flex min-w-0 flex-col gap-3 overflow-hidden xl:h-full xl:min-h-0">
         <section className="flex min-w-0 flex-col border border-[#262d38] bg-[#161b22] xl:min-h-0 xl:flex-1">
           <PanelHeader title={`${activePair} Bid / Ask / Mid`} meta={`${ticks.length} ticks`} />
           {ticksLoading && ticks.length === 0 ? (
@@ -998,6 +1058,15 @@ function MonitorScreen({
             </div>
           )}
         </section>
+
+        <EquityCurvePanel
+          error={equityHistoryError}
+          history={equityHistory}
+          loading={equityHistoryLoading}
+          range={equityHistoryRange}
+          onRangeChange={onSelectEquityHistoryRange}
+          onRetry={onRetryEquityHistory}
+        />
 
         <TickLogPanel activePair={activePair} ticks={recentTicks} loading={ticksLoading} />
       </div>
@@ -2456,6 +2525,26 @@ function getAlertSeverityClass(severity: AlertSeverity): string {
       return "text-[#d29922]";
     case "INFO":
       return "text-[#58a6ff]";
+  }
+}
+
+function equityHistoryRequest(range: EquityHistoryRange): { from?: string; limit: number } {
+  const now = Date.now();
+  switch (range) {
+    case "5m":
+      return {
+        from: new Date(now - 5 * 60 * 1000).toISOString(),
+        limit: EQUITY_HISTORY_DEFAULT_LIMIT,
+      };
+    case "30m":
+      return {
+        from: new Date(now - 30 * 60 * 1000).toISOString(),
+        limit: EQUITY_HISTORY_MAX_LIMIT,
+      };
+    case "all":
+      return {
+        limit: EQUITY_HISTORY_MAX_LIMIT,
+      };
   }
 }
 

@@ -188,6 +188,14 @@ export type AccountSummary = {
   status: AccountMarginStatus;
 };
 
+export type EquitySnapshot = {
+  recordedAt: string;
+  balance: number;
+  equity: number;
+  usedMargin: number | null;
+  marginRatio: number | null;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -507,6 +515,21 @@ export async function fetchAccountSummary(): Promise<AccountSummary> {
   const requestUrl = `${getApiBaseUrl()}/api/trade/account/summary`;
 
   return fetchWithRetry<AccountSummary>(requestUrl);
+}
+
+export async function fetchEquityHistory(
+  limit = 300,
+  from?: string,
+): Promise<EquitySnapshot[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+  if (from) {
+    params.set("from", from);
+  }
+  const requestUrl = `${getApiBaseUrl()}/api/trade/account/equity-history?${params.toString()}`;
+
+  return fetchWithRetry<EquitySnapshot[]>(requestUrl);
 }
 
 async function fetchWithRetry<T>(
