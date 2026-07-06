@@ -46,9 +46,14 @@ import {
   type SpreadStats,
   type TradeSummary,
 } from "../../lib/marketRateTicks";
-import { EquityCurvePanel, type EquityHistoryRange } from "./EquityCurvePanel";
-import { MarketRateChart } from "./MarketRateChart";
-import { SpreadMonitorCard } from "./SpreadMonitorCard";
+import type { EquityHistoryRange } from "./EquityCurvePanel";
+import {
+  AppHeader,
+  HistoryScreen,
+  MonitorScreen,
+  StatusStrip,
+  TradingScreen,
+} from "./MarketMonitorScreens";
 
 const DEFAULT_PAIR = "USD/JPY";
 const TICK_LIMIT = 300;
@@ -64,9 +69,9 @@ const LEGACY_PAIR_STORAGE_KEY = "demofx.selectedPair";
 const MONITOR_PAIR_STORAGE_KEY = "demofx.monitorSelectedPair";
 const TRADING_PAIR_STORAGE_KEY = "demofx.tradingSelectedPair";
 
-type Screen = "monitor" | "trading" | "history";
-type OrderPanelMode = "simple" | "complex";
-type ComplexOrderKind = "IFD" | "IFO";
+export type Screen = "monitor" | "trading" | "history";
+export type OrderPanelMode = "simple" | "complex";
+export type ComplexOrderKind = "IFD" | "IFO";
 
 export function MarketMonitorDashboard() {
   const [screen, setScreen] = useState<Screen>("monitor");
@@ -931,465 +936,7 @@ export function MarketMonitorDashboard() {
   );
 }
 
-function AppHeader({
-  activeAlerts,
-  clock,
-  feedStatus,
-  screen,
-  onScreenChange,
-}: {
-  activeAlerts: number;
-  clock: string;
-  feedStatus: string;
-  screen: Screen;
-  onScreenChange: (screen: Screen) => void;
-}) {
-  return (
-    <header className="z-30 h-[52px] shrink-0 border-b border-[#262d38] bg-[#0d1117]/95 backdrop-blur">
-      <div className="mx-auto flex h-full w-full max-w-[1500px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="grid h-7 w-7 place-items-center border border-[#58a6ff]/60 bg-[#101923] font-mono text-[10px] font-bold text-[#58a6ff]">
-              FX
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold tracking-wide text-[#e6edf3]">
-                DemoFX
-              </div>
-              <div className="font-mono text-[9px] text-[#768390]">DEMO</div>
-            </div>
-          </div>
-          <nav className="flex items-center gap-1 rounded-[6px] border border-[#262d38] bg-[#161b22] p-1">
-            <HeaderTab active={screen === "monitor"} label="Monitor" onClick={() => onScreenChange("monitor")} />
-            <HeaderTab active={screen === "trading"} label="Trading" onClick={() => onScreenChange("trading")} />
-            <HeaderTab active={screen === "history"} label="History" onClick={() => onScreenChange("history")} />
-          </nav>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-3 font-mono text-[11px]">
-          <span className={feedStatus === "LIVE" ? "text-[#3fb950]" : "text-[#d29922]"}>
-            {feedStatus}
-          </span>
-          <span className="hidden text-[#768390] sm:inline">JST {clock}</span>
-          <span className={activeAlerts > 0 ? "text-[#f85149]" : "text-[#768390]"}>
-            ALERTS {activeAlerts}
-          </span>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function HeaderTab({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-[5px] px-3 py-1.5 text-xs font-medium transition-colors ${
-        active
-          ? "bg-[#21272f] text-[#e6edf3]"
-          : "text-[#768390] hover:bg-[#1a2129] hover:text-[#e6edf3]"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-function StatusStrip({
-  activeAlerts,
-  connected,
-  lastUpdated,
-  pairCount,
-}: {
-  activeAlerts: number;
-  connected: boolean;
-  lastUpdated: Date | null;
-  pairCount: number;
-}) {
-  return (
-    <section className="shrink-0 border-b border-[#262d38] bg-[#10151b]">
-      <div className="mx-auto grid w-full max-w-[1500px] grid-cols-2 px-4 sm:px-6 md:grid-cols-5 lg:px-8">
-        <StatusItem label="Backend connection" value={connected ? "Connected" : "Disconnected"} tone={connected ? "positive" : "negative"} />
-        <StatusItem label="Last updated" value={lastUpdated ? formatTime(lastUpdated.toISOString()) : "--:--:--"} />
-        <StatusItem label="Active pairs" value={String(pairCount)} />
-        <StatusItem label="Tick interval" value="5s" />
-        <StatusItem label="Rate update" value="1s" badge={activeAlerts > 0 ? `${activeAlerts} alerts` : undefined} />
-      </div>
-    </section>
-  );
-}
-
-function MonitorScreen({
-  activeAlerts,
-  activePair,
-  alerts,
-  equityHistory,
-  equityHistoryError,
-  equityHistoryLoading,
-  equityHistoryRange,
-  monitoredRates,
-  newsEvents,
-  newsSubmittingDirection,
-  rateChanges,
-  ratesLoading,
-  recentTicks,
-  spreadStats,
-  spreadStatsError,
-  spreadStatsLoading,
-  ticks,
-  ticksLoading,
-  onSelectPair,
-  onSelectEquityHistoryRange,
-  onRetryEquityHistory,
-  onTriggerNews,
-}: {
-  activeAlerts: number;
-  activePair: string;
-  alerts: MarketAlert[];
-  equityHistory: EquitySnapshot[];
-  equityHistoryError: string | null;
-  equityHistoryLoading: boolean;
-  equityHistoryRange: EquityHistoryRange;
-  monitoredRates: MarketRate[];
-  newsEvents: NewsEvent[];
-  newsSubmittingDirection: NewsDirection | null;
-  rateChanges: Record<string, number>;
-  ratesLoading: boolean;
-  recentTicks: MarketRateTick[];
-  spreadStats?: SpreadStats;
-  spreadStatsError: string | null;
-  spreadStatsLoading: boolean;
-  ticks: MarketRateTick[];
-  ticksLoading: boolean;
-  onSelectPair: (currencyPair: string) => void;
-  onSelectEquityHistoryRange: (range: EquityHistoryRange) => void;
-  onRetryEquityHistory: () => void;
-  onTriggerNews: (direction: NewsDirection) => void;
-}) {
-  return (
-    <div className="grid min-h-0 flex-1 gap-3 overflow-hidden xl:grid-cols-[372px_minmax(0,1fr)_360px]">
-      <section className="flex min-h-[420px] flex-col overflow-hidden border border-[#262d38] bg-[#161b22] xl:h-full xl:min-h-0">
-        <PanelHeader title="Rate board" meta={`${monitoredRates.length} pairs`} />
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {ratesLoading && monitoredRates.length === 0 ? (
-            <LoadingPanel label="Loading rates..." compact />
-          ) : monitoredRates.length === 0 ? (
-            <EmptyPanel label="No rates" compact />
-          ) : (
-            <div className="divide-y divide-[#202832]">
-              {monitoredRates.map((rate) => (
-                <RateBoardRow
-                  key={rate.currencyPair}
-                  change={rateChanges[rate.currencyPair] ?? 0}
-                  rate={rate}
-                  selected={rate.currencyPair === activePair}
-                  onSelect={onSelectPair}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <div className="flex min-w-0 flex-col gap-3 overflow-hidden xl:h-full xl:min-h-0">
-        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,3fr)_minmax(0,2fr)] gap-3">
-          <section className="flex min-w-0 min-h-0 flex-col border border-[#262d38] bg-[#161b22]">
-            <PanelHeader title={`${activePair} Bid / Ask / Mid`} meta={`${ticks.length} ticks`} />
-            {ticksLoading && ticks.length === 0 ? (
-              <LoadingPanel label={`Loading ${activePair} ticks...`} />
-            ) : ticks.length === 0 ? (
-              <EmptyPanel label="No tick history" />
-            ) : (
-              <div className="min-h-0 flex-1 p-3">
-                <MarketRateChart currencyPair={activePair} ticks={ticks} />
-              </div>
-            )}
-          </section>
-
-          <EquityCurvePanel
-            error={equityHistoryError}
-            history={equityHistory}
-            loading={equityHistoryLoading}
-            range={equityHistoryRange}
-            onRangeChange={onSelectEquityHistoryRange}
-            onRetry={onRetryEquityHistory}
-          />
-        </div>
-
-        <TickLogPanel activePair={activePair} ticks={recentTicks} loading={ticksLoading} />
-      </div>
-
-      <aside className="flex min-w-0 flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-hidden">
-        <SpreadMonitorCard
-          currencyPair={activePair}
-          error={spreadStatsError}
-          loading={spreadStatsLoading}
-          stats={spreadStats}
-        />
-        <NewsEventPanel
-          activePair={activePair}
-          events={newsEvents}
-          submittingDirection={newsSubmittingDirection}
-          onTrigger={onTriggerNews}
-        />
-        <AlertPanel alerts={alerts} activeCount={activeAlerts} />
-      </aside>
-    </div>
-  );
-}
-
-function TradingScreen({
-  accountSummary,
-  activePair,
-  cancelingExitOrderId,
-  cancelingOcoGroupId,
-  cancelingPendingOrderId,
-  closingPositionId,
-  exitOrderDrafts,
-  ifdExitPrice,
-  ifdExitType,
-  ifoStopLossPrice,
-  ifoTakeProfitPrice,
-  complexOrderKind,
-  orderError,
-  orderPanelMode,
-  orderQuantity,
-  orderType,
-  orders,
-  pendingOrders,
-  positions,
-  pnlSummary,
-  rates,
-  selectedPosition,
-  selectedRate,
-  submittingOrderSide,
-  lastOrderMessage,
-  trades,
-  triggerPrice,
-  submittingExitOrder,
-  submittingIfdSide,
-  submittingIfoSide,
-  submittingOcoPositionId,
-  onCancelExitOrder,
-  onCancelOcoOrder,
-  onCancelPendingOrder,
-  onClosePosition,
-  onExitOrderDraftChange,
-  onIfdExitPriceChange,
-  onIfdExitTypeChange,
-  onIfoStopLossPriceChange,
-  onIfoTakeProfitPriceChange,
-  onComplexOrderKindChange,
-  onQuantityChange,
-  onOrderTypeChange,
-  onOrderPanelModeChange,
-  onSelectPair,
-  onSelectPosition,
-  onSubmitOrder,
-  onSubmitExitOrder,
-  onSubmitIfdOrder,
-  onSubmitIfoOrder,
-  onSubmitOcoOrder,
-  onTriggerPriceChange,
-}: {
-  accountSummary: AccountSummary | null;
-  activePair: string;
-  cancelingExitOrderId: number | null;
-  cancelingOcoGroupId: string | null;
-  cancelingPendingOrderId: number | null;
-  closingPositionId: number | null;
-  exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
-  ifdExitPrice: string;
-  ifdExitType: ExitOrderType;
-  ifoStopLossPrice: string;
-  ifoTakeProfitPrice: string;
-  complexOrderKind: ComplexOrderKind;
-  orderError: string | null;
-  orderPanelMode: OrderPanelMode;
-  orderQuantity: string;
-  orderType: OrderType;
-  orders: OrderSummary[];
-  pendingOrders: PendingOrder[];
-  positions: PositionSummary[];
-  pnlSummary: PnlSummary | null;
-  rates: MarketRate[];
-  selectedPosition: PositionSummary | null;
-  selectedRate?: MarketRate;
-  submittingOrderSide: OrderSide | null;
-  lastOrderMessage: string | null;
-  trades: TradeSummary[];
-  triggerPrice: string;
-  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
-  submittingIfdSide: OrderSide | null;
-  submittingIfoSide: OrderSide | null;
-  submittingOcoPositionId: number | null;
-  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
-  onCancelOcoOrder: (positionId: number, groupId: string) => void;
-  onCancelPendingOrder: (id: number) => void;
-  onClosePosition: (id: number) => void;
-  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
-  onIfdExitPriceChange: (price: string) => void;
-  onIfdExitTypeChange: (type: ExitOrderType) => void;
-  onIfoStopLossPriceChange: (price: string) => void;
-  onIfoTakeProfitPriceChange: (price: string) => void;
-  onComplexOrderKindChange: (kind: ComplexOrderKind) => void;
-  onQuantityChange: (quantity: string) => void;
-  onOrderTypeChange: (orderType: OrderType) => void;
-  onOrderPanelModeChange: (mode: OrderPanelMode) => void;
-  onSelectPair: (currencyPair: string) => void;
-  onSelectPosition: (positionId: number) => void;
-  onSubmitOrder: (side: OrderSide) => void;
-  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
-  onSubmitIfdOrder: (side: OrderSide) => void;
-  onSubmitIfoOrder: (side: OrderSide) => void;
-  onSubmitOcoOrder: (position: PositionSummary) => void;
-  onTriggerPriceChange: (triggerPrice: string) => void;
-}) {
-  const visiblePendingOrders = useMemo(
-    () => pendingOrders.filter((order) => order.status === "PENDING"),
-    [pendingOrders],
-  );
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="flex flex-col gap-4">
-      <AccountSummaryBand summary={accountSummary} />
-
-      <div className="grid gap-4 xl:grid-cols-[430px_minmax(0,1fr)]">
-        <div className="flex min-w-0 flex-col gap-4">
-          <PriceReferencePanel
-            activePair={activePair}
-            rate={selectedRate}
-            rates={rates}
-            onSelectPair={onSelectPair}
-          />
-          <MarketOrderPanel
-            activePair={activePair}
-            complexOrderKind={complexOrderKind}
-            error={orderError}
-            ifdExitPrice={ifdExitPrice}
-            ifdExitType={ifdExitType}
-            ifoStopLossPrice={ifoStopLossPrice}
-            ifoTakeProfitPrice={ifoTakeProfitPrice}
-            lastMessage={lastOrderMessage}
-            mode={orderPanelMode}
-            orderQuantity={orderQuantity}
-            orderType={orderType}
-            rate={selectedRate}
-            submittingIfdSide={submittingIfdSide}
-            submittingIfoSide={submittingIfoSide}
-            submittingSide={submittingOrderSide}
-            triggerPrice={triggerPrice}
-            onIfdExitPriceChange={onIfdExitPriceChange}
-            onIfdExitTypeChange={onIfdExitTypeChange}
-            onIfoStopLossPriceChange={onIfoStopLossPriceChange}
-            onIfoTakeProfitPriceChange={onIfoTakeProfitPriceChange}
-            onComplexOrderKindChange={onComplexOrderKindChange}
-            onModeChange={onOrderPanelModeChange}
-            onQuantityChange={onQuantityChange}
-            onOrderTypeChange={onOrderTypeChange}
-            onSubmit={onSubmitOrder}
-            onSubmitIfd={onSubmitIfdOrder}
-            onSubmitIfo={onSubmitIfoOrder}
-            onTriggerPriceChange={onTriggerPriceChange}
-          />
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-4">
-          <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
-            <PositionsTable
-              positions={positions}
-              selectedPositionId={selectedPosition?.id ?? null}
-              onSelectPosition={onSelectPosition}
-            />
-            <PositionDetailPanel
-              cancelingExitOrderId={cancelingExitOrderId}
-              cancelingOcoGroupId={cancelingOcoGroupId}
-              closingPositionId={closingPositionId}
-              drafts={selectedPosition ? exitOrderDrafts[selectedPosition.id] ?? {} : {}}
-              position={selectedPosition}
-              submittingExitOrder={submittingExitOrder}
-              submittingOcoPositionId={submittingOcoPositionId}
-              onCancelExitOrder={onCancelExitOrder}
-              onCancelOcoOrder={onCancelOcoOrder}
-              onClose={onClosePosition}
-              onExitOrderDraftChange={onExitOrderDraftChange}
-              onSubmitExitOrder={onSubmitExitOrder}
-              onSubmitOcoOrder={onSubmitOcoOrder}
-            />
-          </div>
-          <PendingOrdersPanel
-            cancelingOrderId={cancelingPendingOrderId}
-            orders={visiblePendingOrders}
-            onCancel={onCancelPendingOrder}
-          />
-        </div>
-      </div>
-      </div>
-    </div>
-  );
-}
-
-function HistoryScreen({
-  pendingOrderHistory,
-  pendingOrderHistoryError,
-  pendingOrderHistoryLoading,
-  pnlSummary,
-  pnlSummaryError,
-  pnlSummaryLoading,
-  trades,
-  tradesError,
-  tradesLoading,
-  onSelectPair,
-}: {
-  pendingOrderHistory: PendingOrder[];
-  pendingOrderHistoryError: string | null;
-  pendingOrderHistoryLoading: boolean;
-  pnlSummary: PnlSummary | null;
-  pnlSummaryError: string | null;
-  pnlSummaryLoading: boolean;
-  trades: TradeSummary[];
-  tradesError: string | null;
-  tradesLoading: boolean;
-  onSelectPair: (currencyPair: string) => void;
-}) {
-  return (
-    <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-4 overflow-hidden">
-        <ExecutionHistoryPanel
-          error={tradesError}
-          loading={tradesLoading}
-          trades={trades}
-          onSelectPair={onSelectPair}
-        />
-        <OrderHistoryPanel
-          error={pendingOrderHistoryError}
-          loading={pendingOrderHistoryLoading}
-          orders={pendingOrderHistory}
-        />
-      </div>
-      <div className="flex min-w-0 flex-col gap-4 overflow-hidden">
-        <PnlSummaryPanel
-          accountSummary={null}
-          error={pnlSummaryError}
-          loading={pnlSummaryLoading}
-          summary={pnlSummary}
-        />
-        <FutureHistoryPanel />
-      </div>
-    </div>
-  );
-}
-
-function RateBoardRow({
+export function RateBoardRow({
   change,
   rate,
   selected,
@@ -1459,7 +1006,7 @@ function MiniRate({
   );
 }
 
-function PriceReferencePanel({
+export function PriceReferencePanel({
   activePair,
   onSelectPair,
   rate,
@@ -1506,7 +1053,7 @@ function PriceReferencePanel({
   );
 }
 
-function MarketOrderPanel({
+export function MarketOrderPanel({
   activePair,
   complexOrderKind,
   error,
@@ -1858,7 +1405,7 @@ function ExecutionPrice({
   );
 }
 
-function TickLogPanel({
+export function TickLogPanel({
   activePair,
   loading,
   ticks,
@@ -1914,7 +1461,7 @@ function TickRow({ tick }: { tick: MarketRateTick }) {
   );
 }
 
-function AlertPanel({
+export function AlertPanel({
   activeCount,
   alerts,
 }: {
@@ -1959,7 +1506,7 @@ function AlertRow({ alert }: { alert: MarketAlert }) {
   );
 }
 
-function NewsEventPanel({
+export function NewsEventPanel({
   activePair,
   events,
   submittingDirection,
@@ -2050,7 +1597,7 @@ function NewsEventRow({ event }: { event: NewsEvent }) {
   );
 }
 
-function AccountSummaryBand({ summary }: { summary: AccountSummary | null }) {
+export function AccountSummaryBand({ summary }: { summary: AccountSummary | null }) {
   return (
     <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-4">
       <AccountMetric label="Account" value={summary?.accountId ?? "DEMO-ACCOUNT-001"} />
@@ -2089,7 +1636,7 @@ function AccountMetric({
   );
 }
 
-function ExecutionHistoryPanel({
+export function ExecutionHistoryPanel({
   error,
   loading,
   trades,
@@ -2155,7 +1702,7 @@ function TradeRow({
   );
 }
 
-function OrderHistoryPanel({
+export function OrderHistoryPanel({
   error,
   loading,
   orders,
@@ -2207,7 +1754,7 @@ function OrderRow({ order }: { order: PendingOrder }) {
   );
 }
 
-function PendingOrdersPanel({
+export function PendingOrdersPanel({
   cancelingOrderId,
   orders,
   onCancel,
@@ -2274,7 +1821,7 @@ function PendingOrderRow({
   );
 }
 
-function PositionsTable({
+export function PositionsTable({
   positions,
   selectedPositionId,
   onSelectPosition,
@@ -2360,7 +1907,7 @@ function PositionRow({
   );
 }
 
-function PositionDetailPanel({
+export function PositionDetailPanel({
   cancelingExitOrderId,
   cancelingOcoGroupId,
   closingPositionId,
@@ -2639,7 +2186,7 @@ function exitOrderPlaceholder(position: PositionSummary, type: ExitOrderType) {
     : `>${formatPrice(currentPrice, position.currencyPair)}`;
 }
 
-function PnlSummaryPanel({
+export function PnlSummaryPanel({
   accountSummary,
   error,
   loading,
@@ -2673,7 +2220,7 @@ function PnlSummaryPanel({
   );
 }
 
-function FutureHistoryPanel() {
+export function FutureHistoryPanel() {
   return (
     <section className="min-h-[220px] border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Future reports" meta="C-11 / C-12" />
@@ -2778,7 +2325,7 @@ function ConnectionIssue({
   );
 }
 
-function PanelHeader({
+export function PanelHeader({
   compact,
   meta,
   title,
@@ -2795,7 +2342,7 @@ function PanelHeader({
   );
 }
 
-function StatusItem({
+export function StatusItem({
   badge,
   label,
   tone,
@@ -2817,7 +2364,7 @@ function StatusItem({
   );
 }
 
-function LoadingPanel({
+export function LoadingPanel({
   compact,
   label,
 }: {
@@ -2831,7 +2378,7 @@ function LoadingPanel({
   );
 }
 
-function EmptyPanel({
+export function EmptyPanel({
   compact,
   label,
 }: {
@@ -3026,7 +2573,7 @@ function formatSignedChange(value: number, scale: number): string {
   return `${value > 0 ? "+" : ""}${value.toFixed(scale)}`;
 }
 
-function formatTime(value: string): string {
+export function formatTime(value: string): string {
   return new Intl.DateTimeFormat("ja-JP", {
     hour: "2-digit",
     minute: "2-digit",
