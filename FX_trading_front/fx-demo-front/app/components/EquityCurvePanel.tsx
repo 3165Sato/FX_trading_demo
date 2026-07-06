@@ -15,7 +15,7 @@ import {
 
 import type { EquitySnapshot } from "../../lib/marketRateTicks";
 
-export type EquityHistoryRange = "5m" | "30m" | "all";
+export type EquityHistoryRange = "5m" | "30m" | "1h" | "all";
 
 type EquityCurvePanelProps = {
   error: string | null;
@@ -38,6 +38,7 @@ type EquityChartPoint = {
 const RANGE_LABELS: Record<EquityHistoryRange, string> = {
   "5m": "5m",
   "30m": "30m",
+  "1h": "1h",
   all: "All",
 };
 
@@ -64,7 +65,7 @@ export function EquityCurvePanel({
   const latest = history.at(-1);
 
   return (
-    <section className="flex h-[176px] min-w-0 shrink-0 flex-col overflow-hidden border border-[#262d38] bg-[#161b22]">
+    <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border border-[#262d38] bg-[#161b22]">
       <div className="flex min-h-10 items-center justify-between gap-3 border-b border-[#262d38] bg-[#161b22] px-4 py-2">
         <div className="min-w-0">
           <h2 className="truncate font-mono text-sm font-semibold text-[#e6edf3]">Equity curve</h2>
@@ -76,7 +77,7 @@ export function EquityCurvePanel({
           <LatestValue label="Balance" value={latest?.balance} />
           <LatestValue label="Equity" value={latest?.equity} accent />
           <div className="flex border border-[#262d38] bg-[#0d1117] p-0.5">
-            {(["5m", "30m", "all"] as const).map((value) => (
+            {(["5m", "30m", "1h", "all"] as const).map((value) => (
               <button
                 key={value}
                 type="button"

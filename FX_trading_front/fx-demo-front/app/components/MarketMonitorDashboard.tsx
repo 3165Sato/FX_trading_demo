@@ -13,6 +13,7 @@ import {
   fetchMarketAlerts,
   fetchMarketRateTicks,
   fetchOrders,
+  fetchPendingOrderHistory,
   fetchPendingOrders,
   fetchPnlSummary,
   fetchPositions,
@@ -39,6 +40,7 @@ import {
   type OrderSummary,
   type OrderType,
   type PendingOrder,
+  type PendingOrderStatus,
   type PnlSummary,
   type PositionSummary,
   type SpreadStats,
@@ -62,16 +64,21 @@ const LEGACY_PAIR_STORAGE_KEY = "demofx.selectedPair";
 const MONITOR_PAIR_STORAGE_KEY = "demofx.monitorSelectedPair";
 const TRADING_PAIR_STORAGE_KEY = "demofx.tradingSelectedPair";
 
-type Screen = "monitor" | "trading";
+type Screen = "monitor" | "trading" | "history";
+type OrderPanelMode = "simple" | "complex";
+type ComplexOrderKind = "IFD" | "IFO";
 
 export function MarketMonitorDashboard() {
   const [screen, setScreen] = useState<Screen>("monitor");
+  const [orderPanelMode, setOrderPanelMode] = useState<OrderPanelMode>("simple");
+  const [complexOrderKind, setComplexOrderKind] = useState<ComplexOrderKind>("IFD");
   const [rates, setRates] = useState<MarketRate[]>([]);
   const [ticks, setTicks] = useState<MarketRateTick[]>([]);
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
   const [trades, setTrades] = useState<TradeSummary[]>([]);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
+  const [pendingOrderHistory, setPendingOrderHistory] = useState<PendingOrder[]>([]);
   const [positions, setPositions] = useState<PositionSummary[]>([]);
   const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
   const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
@@ -81,6 +88,7 @@ export function MarketMonitorDashboard() {
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
   const [tradingSelectedPair, setTradingSelectedPair] = useState(DEFAULT_PAIR);
+  const [selectedPositionId, setSelectedPositionId] = useState<number | null>(null);
   const [orderType, setOrderType] = useState<OrderType>("MARKET");
   const [orderQuantity, setOrderQuantity] = useState("10000");
   const [triggerPrice, setTriggerPrice] = useState("");
@@ -97,12 +105,16 @@ export function MarketMonitorDashboard() {
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [pendingOrderHistoryError, setPendingOrderHistoryError] = useState<string | null>(null);
   const [pendingOrdersError, setPendingOrdersError] = useState<string | null>(null);
   const [positionsError, setPositionsError] = useState<string | null>(null);
   const [pnlSummaryError, setPnlSummaryError] = useState<string | null>(null);
   const [accountSummaryError, setAccountSummaryError] = useState<string | null>(null);
   const [equityHistoryError, setEquityHistoryError] = useState<string | null>(null);
   const [equityHistoryLoading, setEquityHistoryLoading] = useState(true);
+  const [tradesLoading, setTradesLoading] = useState(true);
+  const [pendingOrderHistoryLoading, setPendingOrderHistoryLoading] = useState(true);
+  const [pnlSummaryLoading, setPnlSummaryLoading] = useState(true);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
@@ -131,7 +143,7 @@ export function MarketMonitorDashboard() {
         window.localStorage.getItem(MONITOR_PAIR_STORAGE_KEY) ??
         window.localStorage.getItem(LEGACY_PAIR_STORAGE_KEY);
       const savedTradingPair = window.localStorage.getItem(TRADING_PAIR_STORAGE_KEY);
-      if (savedScreen === "monitor" || savedScreen === "trading") {
+      if (savedScreen === "monitor" || savedScreen === "trading" || savedScreen === "history") {
         setScreen(savedScreen);
       }
       if (savedMonitorPair) {
@@ -275,6 +287,8 @@ export function MarketMonitorDashboard() {
       setTradesError(null);
     } catch (error) {
       setTradesError(getErrorMessage(error));
+    } finally {
+      setTradesLoading(false);
     }
   }, []);
 
@@ -298,6 +312,18 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadPendingOrderHistory = useCallback(async () => {
+    try {
+      const nextPendingOrderHistory = await fetchPendingOrderHistory(ORDER_LIMIT);
+      setPendingOrderHistory(nextPendingOrderHistory);
+      setPendingOrderHistoryError(null);
+    } catch (error) {
+      setPendingOrderHistoryError(getErrorMessage(error));
+    } finally {
+      setPendingOrderHistoryLoading(false);
+    }
+  }, []);
+
   const loadPositions = useCallback(async () => {
     try {
       const nextPositions = await fetchPositions();
@@ -315,6 +341,8 @@ export function MarketMonitorDashboard() {
       setPnlSummaryError(null);
     } catch (error) {
       setPnlSummaryError(getErrorMessage(error));
+    } finally {
+      setPnlSummaryLoading(false);
     }
   }, []);
 
@@ -373,6 +401,7 @@ export function MarketMonitorDashboard() {
       void loadTrades();
       void loadOrders();
       void loadPendingOrders();
+      void loadPendingOrderHistory();
       void loadPositions();
       void loadPnlSummary();
       void loadAccountSummary();
@@ -383,7 +412,7 @@ export function MarketMonitorDashboard() {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadAccountSummary, loadOrders, loadPendingOrders, loadPnlSummary, loadPositions, loadTrades]);
+  }, [loadAccountSummary, loadOrders, loadPendingOrderHistory, loadPendingOrders, loadPnlSummary, loadPositions, loadTrades]);
 
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadEquityHistory, 0);
@@ -449,6 +478,10 @@ export function MarketMonitorDashboard() {
     () => rates.find((rate) => rate.currencyPair === tradingActivePair),
     [rates, tradingActivePair],
   );
+  const selectedPosition = useMemo(
+    () => positions.find((position) => position.id === selectedPositionId) ?? positions[0] ?? null,
+    [positions, selectedPositionId],
+  );
   const connected = rates.length > 0 && ratesError === null;
   const stalled = !lastUpdated || nowMs - lastUpdated.getTime() > 8000;
   const feedStatus = connected && !stalled ? "LIVE" : "STALLED";
@@ -460,6 +493,7 @@ export function MarketMonitorDashboard() {
     tradesError ??
     ordersError ??
     pendingOrdersError ??
+    pendingOrderHistoryError ??
     positionsError ??
     pnlSummaryError ??
     accountSummaryError ??
@@ -496,6 +530,7 @@ export function MarketMonitorDashboard() {
     void loadTrades();
     void loadOrders();
     void loadPendingOrders();
+    void loadPendingOrderHistory();
     void loadPositions();
     void loadPnlSummary();
     void loadAccountSummary();
@@ -822,7 +857,7 @@ export function MarketMonitorDashboard() {
             onRetryEquityHistory={loadEquityHistory}
             onTriggerNews={triggerSelectedNewsEvent}
           />
-        ) : (
+        ) : screen === "trading" ? (
           <TradingScreen
             accountSummary={accountSummary}
             activePair={tradingActivePair}
@@ -835,6 +870,7 @@ export function MarketMonitorDashboard() {
             ifoStopLossPrice={ifoStopLossPrice}
             ifoTakeProfitPrice={ifoTakeProfitPrice}
             orderError={orderError}
+            orderPanelMode={orderPanelMode}
             orderQuantity={orderQuantity}
             orderType={orderType}
             orders={orders}
@@ -842,6 +878,7 @@ export function MarketMonitorDashboard() {
             positions={positions}
             pnlSummary={pnlSummary}
             rates={monitoredRates}
+            selectedPosition={selectedPosition}
             selectedRate={selectedRate}
             submittingOrderSide={submittingOrderSide}
             lastOrderMessage={lastOrderMessage}
@@ -851,6 +888,7 @@ export function MarketMonitorDashboard() {
             submittingIfdSide={submittingIfdSide}
             submittingIfoSide={submittingIfoSide}
             submittingOcoPositionId={submittingOcoPositionId}
+            complexOrderKind={complexOrderKind}
             onCancelPendingOrder={cancelSelectedPendingOrder}
             onCancelExitOrder={cancelSelectedExitOrder}
             onCancelOcoOrder={cancelSelectedOcoOrder}
@@ -862,7 +900,10 @@ export function MarketMonitorDashboard() {
             onIfoTakeProfitPriceChange={setIfoTakeProfitPrice}
             onQuantityChange={setOrderQuantity}
             onOrderTypeChange={setOrderType}
+            onOrderPanelModeChange={setOrderPanelMode}
             onSelectPair={selectTradingCurrencyPair}
+            onSelectPosition={setSelectedPositionId}
+            onComplexOrderKindChange={setComplexOrderKind}
             onSubmitOrder={submitMarketOrder}
             onSubmitExitOrder={submitPositionExitOrder}
             onSubmitIfdOrder={submitIfdOrder}
@@ -870,6 +911,19 @@ export function MarketMonitorDashboard() {
             onSubmitOcoOrder={submitPositionOcoOrder}
             onTriggerPriceChange={setTriggerPrice}
             closingPositionId={closingPositionId}
+          />
+        ) : (
+          <HistoryScreen
+            pendingOrderHistory={pendingOrderHistory}
+            pendingOrderHistoryError={pendingOrderHistoryError}
+            pendingOrderHistoryLoading={pendingOrderHistoryLoading}
+            pnlSummary={pnlSummary}
+            pnlSummaryError={pnlSummaryError}
+            pnlSummaryLoading={pnlSummaryLoading}
+            trades={trades}
+            tradesError={tradesError}
+            tradesLoading={tradesLoading}
+            onSelectPair={selectTradingCurrencyPair}
           />
         )}
       </div>
@@ -908,6 +962,7 @@ function AppHeader({
           <nav className="flex items-center gap-1 rounded-[6px] border border-[#262d38] bg-[#161b22] p-1">
             <HeaderTab active={screen === "monitor"} label="Monitor" onClick={() => onScreenChange("monitor")} />
             <HeaderTab active={screen === "trading"} label="Trading" onClick={() => onScreenChange("trading")} />
+            <HeaderTab active={screen === "history"} label="History" onClick={() => onScreenChange("history")} />
           </nav>
         </div>
 
@@ -1046,27 +1101,29 @@ function MonitorScreen({
       </section>
 
       <div className="flex min-w-0 flex-col gap-3 overflow-hidden xl:h-full xl:min-h-0">
-        <section className="flex min-w-0 flex-col border border-[#262d38] bg-[#161b22] xl:min-h-0 xl:flex-1">
-          <PanelHeader title={`${activePair} Bid / Ask / Mid`} meta={`${ticks.length} ticks`} />
-          {ticksLoading && ticks.length === 0 ? (
-            <LoadingPanel label={`Loading ${activePair} ticks...`} />
-          ) : ticks.length === 0 ? (
-            <EmptyPanel label="No tick history" />
-          ) : (
-            <div className="min-h-0 flex-1 p-3">
-              <MarketRateChart currencyPair={activePair} ticks={ticks} />
-            </div>
-          )}
-        </section>
+        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,3fr)_minmax(0,2fr)] gap-3">
+          <section className="flex min-w-0 min-h-0 flex-col border border-[#262d38] bg-[#161b22]">
+            <PanelHeader title={`${activePair} Bid / Ask / Mid`} meta={`${ticks.length} ticks`} />
+            {ticksLoading && ticks.length === 0 ? (
+              <LoadingPanel label={`Loading ${activePair} ticks...`} />
+            ) : ticks.length === 0 ? (
+              <EmptyPanel label="No tick history" />
+            ) : (
+              <div className="min-h-0 flex-1 p-3">
+                <MarketRateChart currencyPair={activePair} ticks={ticks} />
+              </div>
+            )}
+          </section>
 
-        <EquityCurvePanel
-          error={equityHistoryError}
-          history={equityHistory}
-          loading={equityHistoryLoading}
-          range={equityHistoryRange}
-          onRangeChange={onSelectEquityHistoryRange}
-          onRetry={onRetryEquityHistory}
-        />
+          <EquityCurvePanel
+            error={equityHistoryError}
+            history={equityHistory}
+            loading={equityHistoryLoading}
+            range={equityHistoryRange}
+            onRangeChange={onSelectEquityHistoryRange}
+            onRetry={onRetryEquityHistory}
+          />
+        </div>
 
         <TickLogPanel activePair={activePair} ticks={recentTicks} loading={ticksLoading} />
       </div>
@@ -1102,7 +1159,9 @@ function TradingScreen({
   ifdExitType,
   ifoStopLossPrice,
   ifoTakeProfitPrice,
+  complexOrderKind,
   orderError,
+  orderPanelMode,
   orderQuantity,
   orderType,
   orders,
@@ -1110,6 +1169,7 @@ function TradingScreen({
   positions,
   pnlSummary,
   rates,
+  selectedPosition,
   selectedRate,
   submittingOrderSide,
   lastOrderMessage,
@@ -1128,9 +1188,12 @@ function TradingScreen({
   onIfdExitTypeChange,
   onIfoStopLossPriceChange,
   onIfoTakeProfitPriceChange,
+  onComplexOrderKindChange,
   onQuantityChange,
   onOrderTypeChange,
+  onOrderPanelModeChange,
   onSelectPair,
+  onSelectPosition,
   onSubmitOrder,
   onSubmitExitOrder,
   onSubmitIfdOrder,
@@ -1149,7 +1212,9 @@ function TradingScreen({
   ifdExitType: ExitOrderType;
   ifoStopLossPrice: string;
   ifoTakeProfitPrice: string;
+  complexOrderKind: ComplexOrderKind;
   orderError: string | null;
+  orderPanelMode: OrderPanelMode;
   orderQuantity: string;
   orderType: OrderType;
   orders: OrderSummary[];
@@ -1157,6 +1222,7 @@ function TradingScreen({
   positions: PositionSummary[];
   pnlSummary: PnlSummary | null;
   rates: MarketRate[];
+  selectedPosition: PositionSummary | null;
   selectedRate?: MarketRate;
   submittingOrderSide: OrderSide | null;
   lastOrderMessage: string | null;
@@ -1175,9 +1241,12 @@ function TradingScreen({
   onIfdExitTypeChange: (type: ExitOrderType) => void;
   onIfoStopLossPriceChange: (price: string) => void;
   onIfoTakeProfitPriceChange: (price: string) => void;
+  onComplexOrderKindChange: (kind: ComplexOrderKind) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
+  onOrderPanelModeChange: (mode: OrderPanelMode) => void;
   onSelectPair: (currencyPair: string) => void;
+  onSelectPosition: (positionId: number) => void;
   onSubmitOrder: (side: OrderSide) => void;
   onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
   onSubmitIfdOrder: (side: OrderSide) => void;
@@ -1185,6 +1254,10 @@ function TradingScreen({
   onSubmitOcoOrder: (position: PositionSummary) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
+  const visiblePendingOrders = useMemo(
+    () => pendingOrders.filter((order) => order.status === "PENDING"),
+    [pendingOrders],
+  );
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex flex-col gap-4">
@@ -1200,12 +1273,14 @@ function TradingScreen({
           />
           <MarketOrderPanel
             activePair={activePair}
+            complexOrderKind={complexOrderKind}
             error={orderError}
             ifdExitPrice={ifdExitPrice}
             ifdExitType={ifdExitType}
             ifoStopLossPrice={ifoStopLossPrice}
             ifoTakeProfitPrice={ifoTakeProfitPrice}
             lastMessage={lastOrderMessage}
+            mode={orderPanelMode}
             orderQuantity={orderQuantity}
             orderType={orderType}
             rate={selectedRate}
@@ -1217,6 +1292,8 @@ function TradingScreen({
             onIfdExitTypeChange={onIfdExitTypeChange}
             onIfoStopLossPriceChange={onIfoStopLossPriceChange}
             onIfoTakeProfitPriceChange={onIfoTakeProfitPriceChange}
+            onComplexOrderKindChange={onComplexOrderKindChange}
+            onModeChange={onOrderPanelModeChange}
             onQuantityChange={onQuantityChange}
             onOrderTypeChange={onOrderTypeChange}
             onSubmit={onSubmitOrder}
@@ -1226,32 +1303,87 @@ function TradingScreen({
           />
         </div>
 
-        <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
-          <ExecutionHistoryPanel trades={trades} onSelectPair={onSelectPair} />
-          <OrderHistoryPanel orders={orders} />
+        <div className="flex min-w-0 flex-col gap-4">
+          <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
+            <PositionsTable
+              positions={positions}
+              selectedPositionId={selectedPosition?.id ?? null}
+              onSelectPosition={onSelectPosition}
+            />
+            <PositionDetailPanel
+              cancelingExitOrderId={cancelingExitOrderId}
+              cancelingOcoGroupId={cancelingOcoGroupId}
+              closingPositionId={closingPositionId}
+              drafts={selectedPosition ? exitOrderDrafts[selectedPosition.id] ?? {} : {}}
+              position={selectedPosition}
+              submittingExitOrder={submittingExitOrder}
+              submittingOcoPositionId={submittingOcoPositionId}
+              onCancelExitOrder={onCancelExitOrder}
+              onCancelOcoOrder={onCancelOcoOrder}
+              onClose={onClosePosition}
+              onExitOrderDraftChange={onExitOrderDraftChange}
+              onSubmitExitOrder={onSubmitExitOrder}
+              onSubmitOcoOrder={onSubmitOcoOrder}
+            />
+          </div>
           <PendingOrdersPanel
             cancelingOrderId={cancelingPendingOrderId}
-            orders={pendingOrders}
+            orders={visiblePendingOrders}
             onCancel={onCancelPendingOrder}
           />
-          <PositionsTable
-            cancelingExitOrderId={cancelingExitOrderId}
-            cancelingOcoGroupId={cancelingOcoGroupId}
-            closingPositionId={closingPositionId}
-            exitOrderDrafts={exitOrderDrafts}
-            positions={positions}
-            submittingExitOrder={submittingExitOrder}
-            submittingOcoPositionId={submittingOcoPositionId}
-            onCancelExitOrder={onCancelExitOrder}
-            onCancelOcoOrder={onCancelOcoOrder}
-            onClose={onClosePosition}
-            onExitOrderDraftChange={onExitOrderDraftChange}
-            onSubmitExitOrder={onSubmitExitOrder}
-            onSubmitOcoOrder={onSubmitOcoOrder}
-          />
-          <PnlSummaryPanel accountSummary={accountSummary} summary={pnlSummary} />
         </div>
       </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryScreen({
+  pendingOrderHistory,
+  pendingOrderHistoryError,
+  pendingOrderHistoryLoading,
+  pnlSummary,
+  pnlSummaryError,
+  pnlSummaryLoading,
+  trades,
+  tradesError,
+  tradesLoading,
+  onSelectPair,
+}: {
+  pendingOrderHistory: PendingOrder[];
+  pendingOrderHistoryError: string | null;
+  pendingOrderHistoryLoading: boolean;
+  pnlSummary: PnlSummary | null;
+  pnlSummaryError: string | null;
+  pnlSummaryLoading: boolean;
+  trades: TradeSummary[];
+  tradesError: string | null;
+  tradesLoading: boolean;
+  onSelectPair: (currencyPair: string) => void;
+}) {
+  return (
+    <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="flex min-w-0 flex-col gap-4 overflow-hidden">
+        <ExecutionHistoryPanel
+          error={tradesError}
+          loading={tradesLoading}
+          trades={trades}
+          onSelectPair={onSelectPair}
+        />
+        <OrderHistoryPanel
+          error={pendingOrderHistoryError}
+          loading={pendingOrderHistoryLoading}
+          orders={pendingOrderHistory}
+        />
+      </div>
+      <div className="flex min-w-0 flex-col gap-4 overflow-hidden">
+        <PnlSummaryPanel
+          accountSummary={null}
+          error={pnlSummaryError}
+          loading={pnlSummaryLoading}
+          summary={pnlSummary}
+        />
+        <FutureHistoryPanel />
       </div>
     </div>
   );
@@ -1376,12 +1508,14 @@ function PriceReferencePanel({
 
 function MarketOrderPanel({
   activePair,
+  complexOrderKind,
   error,
   ifdExitPrice,
   ifdExitType,
   ifoStopLossPrice,
   ifoTakeProfitPrice,
   lastMessage,
+  mode,
   orderQuantity,
   orderType,
   rate,
@@ -1393,6 +1527,8 @@ function MarketOrderPanel({
   onIfdExitTypeChange,
   onIfoStopLossPriceChange,
   onIfoTakeProfitPriceChange,
+  onComplexOrderKindChange,
+  onModeChange,
   onQuantityChange,
   onOrderTypeChange,
   onSubmit,
@@ -1401,12 +1537,14 @@ function MarketOrderPanel({
   onTriggerPriceChange,
 }: {
   activePair: string;
+  complexOrderKind: ComplexOrderKind;
   error: string | null;
   ifdExitPrice: string;
   ifdExitType: ExitOrderType;
   ifoStopLossPrice: string;
   ifoTakeProfitPrice: string;
   lastMessage: string | null;
+  mode: OrderPanelMode;
   orderQuantity: string;
   orderType: OrderType;
   rate?: MarketRate;
@@ -1418,6 +1556,8 @@ function MarketOrderPanel({
   onIfdExitTypeChange: (type: ExitOrderType) => void;
   onIfoStopLossPriceChange: (price: string) => void;
   onIfoTakeProfitPriceChange: (price: string) => void;
+  onComplexOrderKindChange: (kind: ComplexOrderKind) => void;
+  onModeChange: (mode: OrderPanelMode) => void;
   onQuantityChange: (quantity: string) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onSubmit: (side: OrderSide) => void;
@@ -1425,10 +1565,16 @@ function MarketOrderPanel({
   onSubmitIfo: (side: OrderSide) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
+  const isPendingEntry = orderType !== "MARKET";
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Order ticket" meta={activePair} />
       <div className="space-y-4 px-4 py-4">
+        <div className="grid grid-cols-2 gap-1 border border-[#262d38] bg-[#0d1117] p-1">
+          <ModeTab active={mode === "simple"} label="Simple" onClick={() => onModeChange("simple")} />
+          <ModeTab active={mode === "complex"} label="IFD / IFO" onClick={() => onModeChange("complex")} />
+        </div>
+
         <div>
           <span className="text-[10px] uppercase text-[#768390]">Type</span>
           <div className="mt-2 grid grid-cols-3 gap-1 border border-[#262d38] bg-[#0d1117] p-1">
@@ -1448,6 +1594,7 @@ function MarketOrderPanel({
             ))}
           </div>
         </div>
+
         <label className="block">
           <span className="text-[10px] uppercase text-[#768390]">Units</span>
           <input
@@ -1469,7 +1616,8 @@ function MarketOrderPanel({
             </button>
           ))}
         </div>
-        {orderType !== "MARKET" && (
+
+        {isPendingEntry && (
           <label className="block">
             <span className="text-[10px] uppercase text-[#768390]">Trigger price</span>
             <input
@@ -1486,131 +1634,160 @@ function MarketOrderPanel({
             </div>
           </label>
         )}
-        {orderType !== "MARKET" && (
-          <div className="border border-[#262d38] bg-[#0d1117] p-3">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="text-[10px] uppercase text-[#768390]">IFD exit leg</span>
-              <div className="grid grid-cols-2 gap-1 border border-[#262d38] bg-[#161b22] p-1">
-                {(["TP", "SL"] as ExitOrderType[]).map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => onIfdExitTypeChange(type)}
-                    className={`px-2 py-1 font-mono text-[10px] transition-colors ${
-                      ifdExitType === type
-                        ? "bg-[#21272f] text-[#e6edf3]"
-                        : "text-[#768390] hover:bg-[#0d1117] hover:text-[#e6edf3]"
-                    }`}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
+
+        {mode === "simple" ? (
+          <>
+            <div className="border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-[10px] leading-5 text-[#768390]">
+              BUY uses Ask, SELL uses Bid. The difference is the spread cost.
             </div>
-            <input
-              value={ifdExitPrice}
-              onChange={(event) => onIfdExitPriceChange(event.target.value)}
-              inputMode="decimal"
-              placeholder={`${ifdExitType} price`}
-              className="w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
-            />
-            <div className="mt-2 font-mono text-[10px] leading-5 text-[#768390]">
-              IFD binds this {ifdExitType} after the entry fills. Direction is checked at fill time.
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <OrderButton
-                disabled={submittingIfdSide !== null || submittingSide !== null || !rate}
-                loading={submittingIfdSide === "SELL"}
+                disabled={submittingSide !== null || !rate}
+                loading={submittingSide === "SELL"}
                 price={rate?.bid}
                 side="SELL"
                 currencyPair={activePair}
-                labelPrefix="IFD"
-                onSubmit={onSubmitIfd}
+                onSubmit={onSubmit}
               />
               <OrderButton
-                disabled={submittingIfdSide !== null || submittingSide !== null || !rate}
-                loading={submittingIfdSide === "BUY"}
+                disabled={submittingSide !== null || !rate}
+                loading={submittingSide === "BUY"}
                 price={rate?.ask}
                 side="BUY"
                 currencyPair={activePair}
-                labelPrefix="IFD"
-                onSubmit={onSubmitIfd}
+                onSubmit={onSubmit}
               />
             </div>
-          </div>
-        )}
-        {orderType !== "MARKET" && (
-          <div className="border border-[#262d38] bg-[#0d1117] p-3">
-            <div className="mb-3">
-              <span className="text-[10px] uppercase text-[#768390]">IFO OCO exit pair</span>
-              <div className="mt-1 font-mono text-[10px] leading-5 text-[#768390]">
-                Entry fill creates TP and SL as one OCO group. If either direction is invalid at fill time, both expire.
+          </>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-1 border border-[#262d38] bg-[#0d1117] p-1">
+              <ModeTab active={complexOrderKind === "IFD"} label="IFD" onClick={() => onComplexOrderKindChange("IFD")} />
+              <ModeTab active={complexOrderKind === "IFO"} label="IFO" onClick={() => onComplexOrderKindChange("IFO")} />
+            </div>
+            {orderType === "MARKET" ? (
+              <div className="border border-[#d29922]/40 bg-[#211a0d] px-3 py-2 font-mono text-[10px] leading-5 text-[#d29922]">
+                Complex entry must be LIMIT or STOP.
+              </div>
+            ) : null}
+            <div className="border border-[#262d38] bg-[#0d1117] p-3">
+              <div className="mb-2 text-[10px] uppercase text-[#768390]">Step 1 Entry condition</div>
+              <div className="font-mono text-[11px] leading-5 text-[#adbac7]">
+                {orderType} entry / units {orderQuantity || "--"} / trigger {triggerPrice || "--"}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <OrderButton
+                  disabled={orderType === "MARKET" || submittingIfdSide !== null || submittingIfoSide !== null || submittingSide !== null || !rate}
+                  loading={(complexOrderKind === "IFD" ? submittingIfdSide : submittingIfoSide) === "SELL"}
+                  price={rate?.bid}
+                  side="SELL"
+                  currencyPair={activePair}
+                  labelPrefix={complexOrderKind}
+                  onSubmit={complexOrderKind === "IFD" ? onSubmitIfd : onSubmitIfo}
+                />
+                <OrderButton
+                  disabled={orderType === "MARKET" || submittingIfdSide !== null || submittingIfoSide !== null || submittingSide !== null || !rate}
+                  loading={(complexOrderKind === "IFD" ? submittingIfdSide : submittingIfoSide) === "BUY"}
+                  price={rate?.ask}
+                  side="BUY"
+                  currencyPair={activePair}
+                  labelPrefix={complexOrderKind}
+                  onSubmit={complexOrderKind === "IFD" ? onSubmitIfd : onSubmitIfo}
+                />
               </div>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className="block">
-                <span className="text-[10px] uppercase text-[#768390]">TP price</span>
+            {complexOrderKind === "IFD" ? (
+              <div className="border border-[#262d38] bg-[#0d1117] p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className="text-[10px] uppercase text-[#768390]">Step 2 Exit condition</span>
+                  <div className="grid grid-cols-2 gap-1 border border-[#262d38] bg-[#161b22] p-1">
+                    {(["TP", "SL"] as ExitOrderType[]).map((type) => (
+                      <ModeTab
+                        key={type}
+                        active={ifdExitType === type}
+                        label={type}
+                        onClick={() => onIfdExitTypeChange(type)}
+                      />
+                    ))}
+                  </div>
+                </div>
                 <input
-                  value={ifoTakeProfitPrice}
-                  onChange={(event) => onIfoTakeProfitPriceChange(event.target.value)}
+                  value={ifdExitPrice}
+                  onChange={(event) => onIfdExitPriceChange(event.target.value)}
                   inputMode="decimal"
-                  className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+                  placeholder={`${ifdExitType} price`}
+                  className="w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
                 />
-              </label>
-              <label className="block">
-                <span className="text-[10px] uppercase text-[#768390]">SL price</span>
-                <input
-                  value={ifoStopLossPrice}
-                  onChange={(event) => onIfoStopLossPriceChange(event.target.value)}
-                  inputMode="decimal"
-                  className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
-                />
-              </label>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <OrderButton
-                disabled={submittingIfoSide !== null || submittingIfdSide !== null || submittingSide !== null || !rate}
-                loading={submittingIfoSide === "SELL"}
-                price={rate?.bid}
-                side="SELL"
-                currencyPair={activePair}
-                labelPrefix="IFO"
-                onSubmit={onSubmitIfo}
-              />
-              <OrderButton
-                disabled={submittingIfoSide !== null || submittingIfdSide !== null || submittingSide !== null || !rate}
-                loading={submittingIfoSide === "BUY"}
-                price={rate?.ask}
-                side="BUY"
-                currencyPair={activePair}
-                labelPrefix="IFO"
-                onSubmit={onSubmitIfo}
-              />
+                <div className="mt-2 font-mono text-[10px] leading-5 text-[#768390]">
+                  Exit direction is checked when the entry fills.
+                </div>
+              </div>
+            ) : (
+              <div className="border border-[#262d38] bg-[#0d1117] p-3">
+                <div className="mb-2 text-[10px] uppercase text-[#768390]">Step 2 OCO exit pair</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-[10px] uppercase text-[#768390]">TP price</span>
+                    <input
+                      value={ifoTakeProfitPrice}
+                      onChange={(event) => onIfoTakeProfitPriceChange(event.target.value)}
+                      inputMode="decimal"
+                      className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] uppercase text-[#768390]">SL price</span>
+                    <input
+                      value={ifoStopLossPrice}
+                      onChange={(event) => onIfoStopLossPriceChange(event.target.value)}
+                      inputMode="decimal"
+                      className="mt-2 w-full border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+                    />
+                  </label>
+                </div>
+                <div className="mt-2 font-mono text-[10px] leading-5 text-[#768390]">
+                  If one OCO leg is invalid at fill time, both legs expire together.
+                </div>
+              </div>
+            )}
+            <div className="border border-[#262d38] bg-[#0d1117] px-3 py-2 font-mono text-[10px] leading-5 text-[#768390]">
+              Confirm: {complexOrderKind} {orderType} {orderQuantity || "--"} {activePair}
+              {" "}entry {triggerPrice || "--"}
+              {complexOrderKind === "IFD"
+                ? ` / ${ifdExitType} ${ifdExitPrice || "--"}`
+                : ` / TP ${ifoTakeProfitPrice || "--"} / SL ${ifoStopLossPrice || "--"}`}
             </div>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-2">
-          <OrderButton
-            disabled={submittingSide !== null || !rate}
-            loading={submittingSide === "SELL"}
-            price={rate?.bid}
-            side="SELL"
-            currencyPair={activePair}
-            onSubmit={onSubmit}
-          />
-          <OrderButton
-            disabled={submittingSide !== null || !rate}
-            loading={submittingSide === "BUY"}
-            price={rate?.ask}
-            side="BUY"
-            currencyPair={activePair}
-            onSubmit={onSubmit}
-          />
-        </div>
+
         {error && <div className="border border-[#f85149]/40 bg-[#2a1215] px-3 py-2 font-mono text-[11px] text-[#f0a8a4]">{error}</div>}
         {lastMessage && <div className="border border-[#3fb950]/40 bg-[#102218] px-3 py-2 font-mono text-[11px] text-[#7ee787]">{lastMessage}</div>}
       </div>
     </section>
+  );
+}
+
+function ModeTab({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2 py-2 font-mono text-[11px] transition-colors ${
+        active
+          ? "bg-[#21272f] text-[#e6edf3]"
+          : "text-[#768390] hover:bg-[#161b22] hover:text-[#e6edf3]"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -1875,9 +2052,8 @@ function NewsEventRow({ event }: { event: NewsEvent }) {
 
 function AccountSummaryBand({ summary }: { summary: AccountSummary | null }) {
   return (
-    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-5">
+    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-4">
       <AccountMetric label="Account" value={summary?.accountId ?? "DEMO-ACCOUNT-001"} />
-      <AccountMetric label="Balance" value={formatOptionalJpy(summary?.balance)} />
       <AccountMetric
         label="Equity"
         tone={pnlTone(summary?.unrealizedPnl ?? null)}
@@ -1904,9 +2080,9 @@ function AccountMetric({
 }) {
   const valueClass = metricToneClass(tone);
   return (
-    <div className="bg-[#161b22] px-4 py-3">
+    <div className="bg-[#161b22] px-3 py-2">
       <div className="text-[10px] uppercase text-[#768390]">{label}</div>
-      <div className={`mt-1 font-mono text-sm font-semibold ${valueClass}`}>
+      <div className={`mt-1 truncate font-mono text-[13px] font-semibold tabular-nums ${valueClass}`}>
         {value}
       </div>
     </div>
@@ -1914,20 +2090,37 @@ function AccountMetric({
 }
 
 function ExecutionHistoryPanel({
+  error,
+  loading,
   trades,
   onSelectPair,
 }: {
+  error: string | null;
+  loading: boolean;
   trades: TradeSummary[];
   onSelectPair: (currencyPair: string) => void;
 }) {
   return (
-    <section className="border border-[#262d38] bg-[#161b22]">
+    <section className="min-h-0 flex-1 overflow-hidden border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Execution history" meta={`${trades.length} fills`} />
-      <div className="max-h-[330px] overflow-y-auto">
-        {trades.length === 0 ? (
+      <div className="grid grid-cols-[74px_76px_54px_1fr_1fr_64px_72px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+        <span>Time</span>
+        <span>Pair</span>
+        <span>Side</span>
+        <span className="text-right">Units</span>
+        <span className="text-right">Price</span>
+        <span>Kind</span>
+        <span>Source</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {loading && trades.length === 0 ? (
+          <LoadingPanel label="Loading fills..." compact />
+        ) : error ? (
+          <PanelError message={error} />
+        ) : trades.length === 0 ? (
           <EmptyPanel label="No fills" compact />
         ) : (
-          trades.slice(0, 16).map((trade) => (
+          trades.map((trade) => (
             <TradeRow key={trade.id} trade={trade} onSelectPair={onSelectPair} />
           ))
         )}
@@ -1944,51 +2137,72 @@ function TradeRow({
   onSelectPair: (currencyPair: string) => void;
 }) {
   const sideClass = trade.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
+  const kindClass = trade.tradeKind === "CLOSE" ? "text-[#d29922]" : "text-[#adbac7]";
   return (
     <button
       type="button"
       onClick={() => onSelectPair(trade.currencyPair)}
-      className="grid w-full grid-cols-[80px_1fr_78px_92px] gap-3 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] hover:bg-[#1b222b]"
+      className="grid w-full grid-cols-[74px_76px_54px_1fr_1fr_64px_72px] gap-2 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] hover:bg-[#1b222b]"
     >
       <span className="text-[#768390]">{formatTime(trade.executedAt)}</span>
       <span className="text-[#e6edf3]">{trade.currencyPair}</span>
       <span className={sideClass}>{trade.side}</span>
+      <span className="text-right text-[#adbac7]">{formatQuantity(trade.quantity)}</span>
       <span className="text-right text-[#adbac7]">{formatPrice(trade.price, trade.currencyPair)}</span>
+      <span className={kindClass}>{trade.tradeKind ?? "--"}</span>
+      <span className="text-[#768390]">--</span>
     </button>
   );
 }
 
-function OrderHistoryPanel({ orders }: { orders: OrderSummary[] }) {
+function OrderHistoryPanel({
+  error,
+  loading,
+  orders,
+}: {
+  error: string | null;
+  loading: boolean;
+  orders: PendingOrder[];
+}) {
   return (
-    <section className="border border-[#262d38] bg-[#161b22]">
+    <section className="min-h-0 flex-1 overflow-hidden border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Order history" meta={`${orders.length} orders`} />
-      <div className="max-h-[330px] overflow-y-auto">
-        {orders.length === 0 ? (
+      <div className="grid grid-cols-[74px_76px_62px_54px_1fr_84px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+        <span>Time</span>
+        <span>Pair</span>
+        <span>Type</span>
+        <span>Side</span>
+        <span className="text-right">Trigger</span>
+        <span className="text-right">Status</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {loading && orders.length === 0 ? (
+          <LoadingPanel label="Loading orders..." compact />
+        ) : error ? (
+          <PanelError message={error} />
+        ) : orders.length === 0 ? (
           <EmptyPanel label="No orders" compact />
         ) : (
-          orders.slice(0, 16).map((order) => <OrderRow key={order.id} order={order} />)
+          orders.map((order) => <OrderRow key={order.id} order={order} />)
         )}
       </div>
     </section>
   );
 }
 
-function OrderRow({ order }: { order: OrderSummary }) {
+function OrderRow({ order }: { order: PendingOrder }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
-  const statusLabel =
-    order.source === "LOSS_CUT" ? "LOSS_CUT" : order.source === "TRIGGER" ? "TRIGGER" : order.status;
-  const statusClass =
-    order.source === "LOSS_CUT"
-      ? "text-[#f85149]"
-      : order.source === "TRIGGER"
-        ? "text-[#d29922]"
-        : "text-[#adbac7]";
+  const statusClass = pendingOrderStatusClass(order.status);
+  const typeLabel = order.exitType ? `${order.exitType}` : order.orderType;
+  const pairLabel = order.parentOrderId ? `└ #${order.parentOrderId}` : order.currencyPair;
   return (
-    <div className="grid grid-cols-[80px_1fr_78px_92px] gap-3 border-b border-[#202832] px-3 py-3 font-mono text-[11px]">
-      <span className="text-[#768390]">{formatTime(order.requestedAt)}</span>
-      <span className="text-[#e6edf3]">{order.currencyPair}</span>
+    <div className="grid grid-cols-[74px_76px_62px_54px_1fr_84px] gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px]">
+      <span className="text-[#768390]">{formatTime(order.createdAt)}</span>
+      <span className={order.parentOrderId ? "text-[#768390]" : "text-[#e6edf3]"}>{pairLabel}</span>
+      <span className="text-[#d29922]">{order.ocoGroupId ? `${typeLabel}/OCO` : typeLabel}</span>
       <span className={sideClass}>{order.side}</span>
-      <span className={`text-right ${statusClass}`}>{statusLabel}</span>
+      <span className="text-right text-[#adbac7]">{formatPrice(order.triggerPrice, order.currencyPair)}</span>
+      <span className={`text-right ${statusClass}`}>{order.status}</span>
     </div>
   );
 }
@@ -2041,11 +2255,11 @@ function PendingOrderRow({
 }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
   const typeLabel = order.exitType ? `${order.exitType}` : order.orderType;
-  const pairLabel = order.parentOrderId ? `${order.ocoGroupId ? "IFO" : "IFD"} #${order.parentOrderId}` : order.currencyPair;
+  const pairLabel = order.parentOrderId ? `└ #${order.parentOrderId}` : order.currencyPair;
   return (
     <div className="grid grid-cols-[76px_62px_62px_1fr_72px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
-      <span className="truncate text-[#e6edf3]">{pairLabel}</span>
-      <span className="text-[#d29922]">{typeLabel}</span>
+      <span className={order.parentOrderId ? "truncate text-[#768390]" : "truncate text-[#e6edf3]"}>{pairLabel}</span>
+      <span className="text-[#d29922]">{order.ocoGroupId ? `${typeLabel}/OCO` : typeLabel}</span>
       <span className={sideClass}>{order.side}</span>
       <span className="text-right text-[#adbac7]">{formatPrice(order.triggerPrice, order.currencyPair)}</span>
       <button
@@ -2061,39 +2275,18 @@ function PendingOrderRow({
 }
 
 function PositionsTable({
-  cancelingExitOrderId,
-  cancelingOcoGroupId,
-  closingPositionId,
-  exitOrderDrafts,
   positions,
-  submittingExitOrder,
-  submittingOcoPositionId,
-  onCancelExitOrder,
-  onCancelOcoOrder,
-  onClose,
-  onExitOrderDraftChange,
-  onSubmitExitOrder,
-  onSubmitOcoOrder,
+  selectedPositionId,
+  onSelectPosition,
 }: {
-  cancelingExitOrderId: number | null;
-  cancelingOcoGroupId: string | null;
-  closingPositionId: number | null;
-  exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
   positions: PositionSummary[];
-  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
-  submittingOcoPositionId: number | null;
-  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
-  onCancelOcoOrder: (positionId: number, groupId: string) => void;
-  onClose: (id: number) => void;
-  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
-  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
-  onSubmitOcoOrder: (position: PositionSummary) => void;
+  selectedPositionId: number | null;
+  onSelectPosition: (positionId: number) => void;
 }) {
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Positions" meta={`${positions.length} open`} />
-      <div className="grid grid-cols-[44px_72px_58px_1fr_1fr_1fr_1fr_1fr_168px_74px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
-        <span>ID</span>
+      <div className="grid grid-cols-[76px_58px_1fr_1fr_1fr_1fr_1fr_92px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>Pair</span>
         <span>Side</span>
         <span className="text-right">Units</span>
@@ -2101,8 +2294,7 @@ function PositionsTable({
         <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
         <span className="text-right">Margin</span>
-        <span className="text-center">TP / SL</span>
-        <span className="text-right">Action</span>
+        <span className="text-center">Exit</span>
       </div>
       <div className="max-h-[260px] overflow-y-auto">
         {positions.length === 0 ? (
@@ -2111,19 +2303,9 @@ function PositionsTable({
           positions.map((position) => (
             <PositionRow
               key={position.id}
-              cancelingExitOrderId={cancelingExitOrderId}
-              cancelingOcoGroupId={cancelingOcoGroupId}
-              closing={closingPositionId === position.id}
-              drafts={exitOrderDrafts[position.id] ?? {}}
               position={position}
-              submittingExitOrder={submittingExitOrder}
-              submittingOcoPositionId={submittingOcoPositionId}
-              onCancelExitOrder={onCancelExitOrder}
-              onCancelOcoOrder={onCancelOcoOrder}
-              onClose={onClose}
-              onExitOrderDraftChange={onExitOrderDraftChange}
-              onSubmitExitOrder={onSubmitExitOrder}
-              onSubmitOcoOrder={onSubmitOcoOrder}
+              selected={position.id === selectedPositionId}
+              onSelect={onSelectPosition}
             />
           ))
         )}
@@ -2133,43 +2315,25 @@ function PositionsTable({
 }
 
 function PositionRow({
-  cancelingExitOrderId,
-  cancelingOcoGroupId,
-  closing,
-  drafts,
   position,
-  submittingExitOrder,
-  submittingOcoPositionId,
-  onCancelExitOrder,
-  onCancelOcoOrder,
-  onClose,
-  onExitOrderDraftChange,
-  onSubmitExitOrder,
-  onSubmitOcoOrder,
+  selected,
+  onSelect,
 }: {
-  cancelingExitOrderId: number | null;
-  cancelingOcoGroupId: string | null;
-  closing: boolean;
-  drafts: Partial<Record<ExitOrderType, string>>;
   position: PositionSummary;
-  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
-  submittingOcoPositionId: number | null;
-  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
-  onCancelOcoOrder: (positionId: number, groupId: string) => void;
-  onClose: (id: number) => void;
-  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
-  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
-  onSubmitOcoOrder: (position: PositionSummary) => void;
+  selected: boolean;
+  onSelect: (positionId: number) => void;
 }) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
   const pnlClass = pnlToneClass(position.unrealizedPnl);
-  const tpOrder = findPositionExitOrder(position, "TP");
-  const slOrder = findPositionExitOrder(position, "SL");
-  const ocoGroupId = tpOrder?.ocoGroupId ?? slOrder?.ocoGroupId ?? null;
-  const canSubmitOco = !tpOrder && !slOrder;
+  const badges = exitOrderBadges(position);
   return (
-    <div className="grid grid-cols-[44px_72px_58px_1fr_1fr_1fr_1fr_1fr_168px_74px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
-      <span className="text-[#768390]">#{position.id}</span>
+    <button
+      type="button"
+      onClick={() => onSelect(position.id)}
+      className={`grid w-full grid-cols-[76px_58px_1fr_1fr_1fr_1fr_1fr_92px] items-center gap-2 border-l-2 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] last:border-b-0 ${
+        selected ? "border-l-[#58a6ff] bg-[#101923]" : "border-l-transparent hover:bg-[#1b222b]"
+      }`}
+    >
       <span className="text-[#e6edf3]">{position.currencyPair}</span>
       <span className={sideClass}>{position.side}</span>
       <span className="text-right text-[#adbac7]">{formatQuantity(position.quantity)}</span>
@@ -2185,7 +2349,114 @@ function PositionRow({
           : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
       </span>
       <span className="text-right text-[#adbac7]">{formatOptionalJpy(position.requiredMargin)}</span>
-      <div className="grid gap-1">
+      <span className="flex justify-center gap-1">
+        {badges.length === 0 ? (
+          <span className="text-[#768390]">--</span>
+        ) : (
+          badges.map((badge) => <ExitBadge key={badge} label={badge} />)
+        )}
+      </span>
+    </button>
+  );
+}
+
+function PositionDetailPanel({
+  cancelingExitOrderId,
+  cancelingOcoGroupId,
+  closingPositionId,
+  drafts,
+  position,
+  submittingExitOrder,
+  submittingOcoPositionId,
+  onCancelExitOrder,
+  onCancelOcoOrder,
+  onClose,
+  onExitOrderDraftChange,
+  onSubmitExitOrder,
+  onSubmitOcoOrder,
+}: {
+  cancelingExitOrderId: number | null;
+  cancelingOcoGroupId: string | null;
+  closingPositionId: number | null;
+  drafts: Partial<Record<ExitOrderType, string>>;
+  position: PositionSummary | null;
+  submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
+  submittingOcoPositionId: number | null;
+  onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
+  onCancelOcoOrder: (positionId: number, groupId: string) => void;
+  onClose: (id: number) => void;
+  onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
+  onSubmitOcoOrder: (position: PositionSummary) => void;
+}) {
+  if (!position) {
+    return (
+      <section className="border border-[#262d38] bg-[#161b22]">
+        <PanelHeader title="Position detail" meta="none" />
+        <EmptyPanel label="Select a position" compact />
+      </section>
+    );
+  }
+
+  const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
+  const pnlClass = pnlToneClass(position.unrealizedPnl);
+  const activeExitOrders = position.exitOrders.filter(isActivePendingOrder);
+  const tpOrder = findPositionExitOrder(position, "TP");
+  const slOrder = findPositionExitOrder(position, "SL");
+  const ocoGroupId = tpOrder?.ocoGroupId ?? slOrder?.ocoGroupId ?? null;
+  const canSubmitOco = !tpOrder && !slOrder;
+  return (
+    <section className="border border-[#262d38] bg-[#161b22]">
+      <PanelHeader title="Position detail" meta={`#${position.id}`} />
+      <div className="grid gap-px bg-[#262d38] sm:grid-cols-2">
+        <DetailMetric label="Pair" value={position.currencyPair} />
+        <DetailMetric label="Side" value={position.side} className={sideClass} />
+        <DetailMetric label="Units" value={formatQuantity(position.quantity)} />
+        <DetailMetric label="Open" value={formatPrice(position.averagePrice, position.currencyPair)} />
+        <DetailMetric label="Current" value={position.currentPrice === null ? "--" : formatPrice(position.currentPrice, position.currencyPair)} />
+        <DetailMetric
+          label="P&L"
+          value={position.unrealizedPnl === null ? "--" : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
+          className={pnlClass}
+        />
+        <DetailMetric label="Margin" value={formatOptionalJpy(position.requiredMargin)} />
+        <DetailMetric label="Opened" value={position.openedAt ? formatTime(position.openedAt) : "--"} />
+      </div>
+      <div className="border-t border-[#262d38] p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[10px] uppercase text-[#768390]">Exit orders</span>
+          {ocoGroupId && <ExitBadge label="OCO" />}
+        </div>
+        {activeExitOrders.length === 0 ? (
+          <div className="border border-[#262d38] bg-[#0d1117] px-3 py-3 text-sm text-[#768390]">
+            No exit orders. Use the controls below.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#202832] border border-[#262d38] bg-[#0d1117]">
+            {activeExitOrders.map((order) => (
+              <div key={order.id} className="grid grid-cols-[34px_1fr_64px] items-center gap-2 px-3 py-2 font-mono text-[11px]">
+                <span className={order.type === "TP" ? "text-[#3fb950]" : "text-[#f85149]"}>{order.type ?? "--"}</span>
+                <span className="text-[#adbac7]">
+                  {formatPrice(order.triggerPrice, position.currencyPair)} / {order.status}
+                </span>
+                <button
+                  type="button"
+                  disabled={cancelingExitOrderId === order.id || (order.ocoGroupId !== null && cancelingOcoGroupId === order.ocoGroupId)}
+                  onClick={() =>
+                    order.ocoGroupId
+                      ? onCancelOcoOrder(position.id, order.ocoGroupId)
+                      : onCancelExitOrder(position.id, order.id)
+                  }
+                  className="border border-[#262d38] px-2 py-1 text-[10px] uppercase text-[#adbac7] hover:bg-[#21272f] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {cancelingExitOrderId === order.id || (order.ocoGroupId !== null && cancelingOcoGroupId === order.ocoGroupId) ? "..." : "Cancel"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="grid gap-2 border-t border-[#262d38] p-3">
         <ExitOrderControl
           canceling={cancelingExitOrderId === tpOrder?.id}
           cancelingOco={ocoGroupId !== null && cancelingOcoGroupId === ocoGroupId}
@@ -2212,30 +2483,51 @@ function PositionRow({
           onChange={onExitOrderDraftChange}
           onSubmit={onSubmitExitOrder}
         />
-        {canSubmitOco ? (
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            disabled={submittingOcoPositionId === position.id}
+            disabled={!canSubmitOco || submittingOcoPositionId === position.id}
             onClick={() => onSubmitOcoOrder(position)}
-            className="border border-[#d29922]/60 px-1.5 py-0.5 text-[9px] uppercase text-[#d29922] hover:bg-[#d29922]/10 disabled:cursor-not-allowed disabled:opacity-50"
+            className="border border-[#d29922]/60 px-2 py-2 font-mono text-[10px] uppercase text-[#d29922] hover:bg-[#d29922]/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submittingOcoPositionId === position.id ? "Setting" : "Set OCO"}
+            {submittingOcoPositionId === position.id ? "Setting..." : "Set OCO"}
           </button>
-        ) : ocoGroupId ? (
-          <div className="text-center text-[9px] uppercase text-[#d29922]">OCO</div>
-        ) : null}
+          <button
+            type="button"
+            disabled={closingPositionId === position.id}
+            onClick={() => onClose(position.id)}
+            className="border border-[#f85149]/70 px-2 py-2 font-mono text-[10px] uppercase text-[#f85149] hover:bg-[#f85149]/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {closingPositionId === position.id ? "Closing..." : "Close position"}
+          </button>
+        </div>
       </div>
-      <span className="text-right">
-        <button
-          type="button"
-          className="border border-[#f85149]/70 px-2 py-1 text-[10px] uppercase text-[#f85149] transition-colors hover:bg-[#f85149]/10 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={closing}
-          onClick={() => onClose(position.id)}
-        >
-          {closing ? "Closing" : "Close"}
-        </button>
-      </span>
+    </section>
+  );
+}
+
+function DetailMetric({
+  className = "text-[#adbac7]",
+  label,
+  value,
+}: {
+  className?: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="bg-[#161b22] px-3 py-2">
+      <div className="text-[10px] uppercase text-[#768390]">{label}</div>
+      <div className={`mt-1 font-mono text-[11px] font-semibold tabular-nums ${className}`}>{value}</div>
     </div>
+  );
+}
+
+function ExitBadge({ label }: { label: string }) {
+  return (
+    <span className="border border-[#262d38] bg-[#0d1117] px-1.5 py-0.5 font-mono text-[9px] uppercase text-[#d29922]">
+      {label}
+    </span>
   );
 }
 
@@ -2319,6 +2611,22 @@ function findPositionExitOrder(position: PositionSummary, type: ExitOrderType) {
   );
 }
 
+function isActivePendingOrder(order: PositionSummary["exitOrders"][number]) {
+  return order.status === "PENDING" || order.status === "WAITING";
+}
+
+function exitOrderBadges(position: PositionSummary): string[] {
+  const activeOrders = position.exitOrders.filter(isActivePendingOrder);
+  const hasTp = activeOrders.some((order) => order.type === "TP");
+  const hasSl = activeOrders.some((order) => order.type === "SL");
+  const hasOco = activeOrders.some((order) => order.ocoGroupId !== null);
+  return [
+    ...(hasTp ? ["TP"] : []),
+    ...(hasSl ? ["SL"] : []),
+    ...(hasOco ? ["OCO"] : []),
+  ];
+}
+
 function exitOrderPlaceholder(position: PositionSummary, type: ExitOrderType) {
   const currentPrice = position.currentPrice ?? position.averagePrice;
   if (position.side === "LONG") {
@@ -2333,9 +2641,13 @@ function exitOrderPlaceholder(position: PositionSummary, type: ExitOrderType) {
 
 function PnlSummaryPanel({
   accountSummary,
+  error,
+  loading,
   summary,
 }: {
-  accountSummary: AccountSummary | null;
+  accountSummary?: AccountSummary | null;
+  error?: string | null;
+  loading?: boolean;
   summary: PnlSummary | null;
 }) {
   const unrealizedRows = formatCurrencyMap(summary?.unrealizedByCurrency);
@@ -2343,12 +2655,36 @@ function PnlSummaryPanel({
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="P&L / Margin" meta={accountSummary?.status ?? "SAFE"} />
-      <div className="grid gap-px bg-[#262d38] md:grid-cols-3">
-        <PnlMetric label="Unrealized P&L" rows={unrealizedRows} />
-        <PnlMetric label="Realized P&L" rows={realizedRows} />
-        <AccountMetric label="Used margin" value={formatOptionalJpy(accountSummary?.usedMargin)} />
+      {loading && !summary ? (
+        <LoadingPanel label="Loading P&L..." compact />
+      ) : error ? (
+        <PanelError message={error} />
+      ) : (
+        <>
+          <div className="grid gap-px bg-[#262d38] md:grid-cols-3">
+            <PnlMetric label="Unrealized P&L" rows={unrealizedRows} />
+            <PnlMetric label="Realized P&L" rows={realizedRows} />
+            <AccountMetric label="Used margin" value={formatOptionalJpy(accountSummary?.usedMargin)} />
+          </div>
+          {accountSummary ? <MarginGauge summary={accountSummary} /> : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function FutureHistoryPanel() {
+  return (
+    <section className="min-h-[220px] border border-[#262d38] bg-[#161b22]">
+      <PanelHeader title="Future reports" meta="C-11 / C-12" />
+      <div className="grid min-h-[166px] place-items-center px-6 text-center">
+        <div>
+          <div className="font-mono text-sm font-semibold text-[#e6edf3]">Coming soon</div>
+          <div className="mt-2 text-sm leading-6 text-[#768390]">
+            Period P&L reports and cash transaction history will land here.
+          </div>
+        </div>
       </div>
-      <MarginGauge summary={accountSummary} />
     </section>
   );
 }
@@ -2509,6 +2845,14 @@ function EmptyPanel({
   );
 }
 
+function PanelError({ message }: { message: string }) {
+  return (
+    <div className="grid min-h-24 place-items-center px-4 py-6 text-center font-mono text-xs text-[#f0a8a4]">
+      {message}
+    </div>
+  );
+}
+
 function CompactEmpty({ label }: { label: string }) {
   return (
     <div className="grid min-h-12 place-items-center text-sm text-[#768390]">
@@ -2541,10 +2885,31 @@ function equityHistoryRequest(range: EquityHistoryRange): { from?: string; limit
         from: new Date(now - 30 * 60 * 1000).toISOString(),
         limit: EQUITY_HISTORY_MAX_LIMIT,
       };
+    case "1h":
+      return {
+        from: new Date(now - 60 * 60 * 1000).toISOString(),
+        limit: EQUITY_HISTORY_MAX_LIMIT,
+      };
     case "all":
       return {
         limit: EQUITY_HISTORY_MAX_LIMIT,
       };
+  }
+}
+
+function pendingOrderStatusClass(status: PendingOrderStatus): string {
+  switch (status) {
+    case "TRIGGERED":
+      return "text-[#3fb950]";
+    case "REJECTED":
+      return "text-[#f85149]";
+    case "EXPIRED":
+      return "text-[#d29922]";
+    case "PENDING":
+    case "WAITING":
+    case "CANCELED":
+    case "CANCELLED":
+      return "text-[#768390]";
   }
 }
 

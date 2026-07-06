@@ -400,6 +400,30 @@ export async function fetchPendingOrders(
   return fetchWithRetry<PendingOrder[]>(requestUrl);
 }
 
+export async function fetchPendingOrderHistory(limit = 50): Promise<PendingOrder[]> {
+  const statuses: PendingOrderStatus[] = [
+    "PENDING",
+    "WAITING",
+    "TRIGGERED",
+    "CANCELED",
+    "CANCELLED",
+    "REJECTED",
+    "EXPIRED",
+  ];
+  const results = await Promise.all(
+    statuses.map((status) => fetchPendingOrders(status, undefined, limit)),
+  );
+  const byId = new Map<number, PendingOrder>();
+  for (const order of results.flat()) {
+    byId.set(order.id, order);
+  }
+
+  return [...byId.values()].sort(
+    (first, second) =>
+      new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime(),
+  );
+}
+
 export async function cancelPendingOrder(id: number): Promise<PendingOrder> {
   const requestUrl = `${getApiBaseUrl()}/api/trade/orders/pending/${id}/cancel`;
 
