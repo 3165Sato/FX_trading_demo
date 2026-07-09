@@ -303,6 +303,8 @@ export function TradingScreen({
   submittingIfdSide,
   submittingIfoSide,
   submittingOcoPositionId,
+  transferringAllSwaps,
+  transferringSwapPositionId,
   onCancelExitOrder,
   onCancelOcoOrder,
   onCancelPendingOrder,
@@ -323,6 +325,8 @@ export function TradingScreen({
   onSubmitIfdOrder,
   onSubmitIfoOrder,
   onSubmitOcoOrder,
+  onTransferAllSwaps,
+  onTransferPositionSwap,
   onTriggerPriceChange,
 }: {
   accountSummary: AccountSummary | null;
@@ -356,6 +360,8 @@ export function TradingScreen({
   submittingIfdSide: OrderSide | null;
   submittingIfoSide: OrderSide | null;
   submittingOcoPositionId: number | null;
+  transferringAllSwaps: boolean;
+  transferringSwapPositionId: number | null;
   onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelOcoOrder: (positionId: number, groupId: string) => void;
   onCancelPendingOrder: (id: number) => void;
@@ -376,6 +382,8 @@ export function TradingScreen({
   onSubmitIfdOrder: (side: OrderSide) => void;
   onSubmitIfoOrder: (side: OrderSide) => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
+  onTransferAllSwaps: () => void;
+  onTransferPositionSwap: (position: PositionSummary) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
 }) {
   const visiblePendingOrders = useMemo(
@@ -385,7 +393,11 @@ export function TradingScreen({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex flex-col gap-4">
-      <AccountSummaryBand summary={accountSummary} />
+      <AccountSummaryBand
+        summary={accountSummary}
+        transferringAllSwaps={transferringAllSwaps}
+        onTransferAllSwaps={onTransferAllSwaps}
+      />
 
       <div className="grid gap-4 xl:grid-cols-[430px_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
@@ -442,12 +454,14 @@ export function TradingScreen({
               position={selectedPosition}
               submittingExitOrder={submittingExitOrder}
               submittingOcoPositionId={submittingOcoPositionId}
+              transferringSwapPositionId={transferringSwapPositionId}
               onCancelExitOrder={onCancelExitOrder}
               onCancelOcoOrder={onCancelOcoOrder}
               onClose={onClosePosition}
               onExitOrderDraftChange={onExitOrderDraftChange}
               onSubmitExitOrder={onSubmitExitOrder}
               onSubmitOcoOrder={onSubmitOcoOrder}
+              onTransferSwap={onTransferPositionSwap}
             />
           </div>
           <PendingOrdersPanel

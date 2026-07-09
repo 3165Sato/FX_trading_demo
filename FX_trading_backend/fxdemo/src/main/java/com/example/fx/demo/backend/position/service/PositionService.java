@@ -12,6 +12,7 @@ import com.example.fx.demo.backend.common.enums.OrderStatus;
 import com.example.fx.demo.backend.common.enums.OrderType;
 import com.example.fx.demo.backend.common.enums.PositionSide;
 import com.example.fx.demo.backend.common.enums.PositionStatus;
+import com.example.fx.demo.backend.common.enums.SwapRealizationSource;
 import com.example.fx.demo.backend.common.enums.TradeKind;
 import com.example.fx.demo.backend.common.enums.TriggerOrderPurpose;
 import com.example.fx.demo.backend.common.enums.TriggerOrderStatus;
@@ -29,10 +30,12 @@ import com.example.fx.demo.backend.order.domain.FxOrder;
 import com.example.fx.demo.backend.order.repository.FxOrderRepository;
 import com.example.fx.demo.backend.order.domain.TriggerOrder;
 import com.example.fx.demo.backend.order.repository.TriggerOrderRepository;
+import com.example.fx.demo.backend.position.domain.SwapRealization;
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
+import com.example.fx.demo.backend.position.repository.SwapRealizationRepository;
 import com.example.fx.demo.backend.trade.service.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.config.DemoTradingAccountInitializer;
 import com.example.fx.demo.backend.trade.domain.Trade;
@@ -72,6 +75,7 @@ public class PositionService {
     private final MarginRuleRepository marginRuleRepository;
     private final MarketRateRepository marketRateRepository;
     private final PositionRepository positionRepository;
+    private final SwapRealizationRepository swapRealizationRepository;
     private final TradeRepository tradeRepository;
     private final TriggerOrderRepository triggerOrderRepository;
 
@@ -87,6 +91,7 @@ public class PositionService {
             MarginRuleRepository marginRuleRepository,
             MarketRateRepository marketRateRepository,
             PositionRepository positionRepository,
+            SwapRealizationRepository swapRealizationRepository,
             TradeRepository tradeRepository,
             TriggerOrderRepository triggerOrderRepository
     ) {
@@ -101,6 +106,7 @@ public class PositionService {
         this.marginRuleRepository = marginRuleRepository;
         this.marketRateRepository = marketRateRepository;
         this.positionRepository = positionRepository;
+        this.swapRealizationRepository = swapRealizationRepository;
         this.tradeRepository = tradeRepository;
         this.triggerOrderRepository = triggerOrderRepository;
     }
@@ -289,6 +295,7 @@ public class PositionService {
         Position savedPosition = positionRepository.save(position);
 
         reflectRealizedPnl(account, realizedPnl, currencyPair.getQuoteCurrency(), realizedSwap);
+        recordRealizedSwap(account, savedPosition, realizedSwap, SwapRealizationSource.CLOSE, now);
         expirePendingExitOrders(savedPosition.getId());
 
         return new PositionCloseResponse(
@@ -364,6 +371,25 @@ public class PositionService {
         account.setRealizedPnl(currentRealized.add(realizedTotalJpy).setScale(0, RoundingMode.HALF_UP));
         account.setBalance(currentBalance.add(realizedTotalJpy).setScale(0, RoundingMode.HALF_UP));
         accountRepository.save(account);
+    }
+
+    private void recordRealizedSwap(
+            Account account,
+            Position position,
+            BigDecimal realizedSwap,
+            SwapRealizationSource source,
+            LocalDateTime realizedAt
+    ) {
+        if (realizedSwap == null || realizedSwap.signum() == 0) {
+            return;
+        }
+        SwapRealization realization = new SwapRealization();
+        realization.setAccountId(account.getId());
+        realization.setPositionId(position.getId());
+        realization.setAmount(realizedSwap.setScale(4, RoundingMode.HALF_UP));
+        realization.setSource(source);
+        realization.setRealizedAt(realizedAt);
+        swapRealizationRepository.save(realization);
     }
 
     private BigDecimal calculateRealizedPnl(Position position, BigDecimal closePrice) {

@@ -28,6 +28,8 @@ import {
   placeMarketOrder,
   triggerNewsEvent,
   triggerSwapRollover,
+  transferAllPositionSwaps,
+  transferPositionSwap,
   type AccountSummary,
   type AlertSeverity,
   type EquitySnapshot,
@@ -134,6 +136,8 @@ export function MarketMonitorDashboard() {
   const [submittingIfoSide, setSubmittingIfoSide] = useState<OrderSide | null>(null);
   const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
   const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
+  const [transferringSwapPositionId, setTransferringSwapPositionId] = useState<number | null>(null);
+  const [transferringAllSwaps, setTransferringAllSwaps] = useState(false);
   const [exitOrderDrafts, setExitOrderDrafts] = useState<Record<number, Partial<Record<ExitOrderType, string>>>>({});
   const [submittingExitOrder, setSubmittingExitOrder] = useState<{ positionId: number; type: ExitOrderType } | null>(null);
   const [cancelingExitOrderId, setCancelingExitOrderId] = useState<number | null>(null);
@@ -743,6 +747,44 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const transferSelectedPositionSwap = async (position: PositionSummary) => {
+    setTransferringSwapPositionId(position.id);
+    try {
+      const result = await transferPositionSwap(position.id);
+      setLastOrderMessage(
+        `SWAP TRANSFER #${position.id} ${position.currencyPair} ${formatOptionalJpy(result.transferredSwap)}`,
+      );
+      setOrderError(null);
+      void loadPositions();
+      void loadPnlSummary();
+      void loadAccountSummary();
+      void loadEquityHistory();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setTransferringSwapPositionId(null);
+    }
+  };
+
+  const transferAllSwaps = async () => {
+    setTransferringAllSwaps(true);
+    try {
+      const result = await transferAllPositionSwaps();
+      setLastOrderMessage(
+        `SWAP TRANSFER ALL ${result.transferredPositions} positions / ${formatOptionalJpy(result.totalTransferredSwap)}`,
+      );
+      setOrderError(null);
+      void loadPositions();
+      void loadPnlSummary();
+      void loadAccountSummary();
+      void loadEquityHistory();
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setTransferringAllSwaps(false);
+    }
+  };
+
   const updateExitOrderDraft = (positionId: number, type: ExitOrderType, value: string) => {
     setExitOrderDrafts((current) => ({
       ...current,
@@ -920,6 +962,8 @@ export function MarketMonitorDashboard() {
             submittingIfdSide={submittingIfdSide}
             submittingIfoSide={submittingIfoSide}
             submittingOcoPositionId={submittingOcoPositionId}
+            transferringAllSwaps={transferringAllSwaps}
+            transferringSwapPositionId={transferringSwapPositionId}
             complexOrderKind={complexOrderKind}
             onCancelPendingOrder={cancelSelectedPendingOrder}
             onCancelExitOrder={cancelSelectedExitOrder}
@@ -941,6 +985,8 @@ export function MarketMonitorDashboard() {
             onSubmitIfdOrder={submitIfdOrder}
             onSubmitIfoOrder={submitIfoOrder}
             onSubmitOcoOrder={submitPositionOcoOrder}
+            onTransferAllSwaps={transferAllSwaps}
+            onTransferPositionSwap={transferSelectedPositionSwap}
             onTriggerPriceChange={setTriggerPrice}
             closingPositionId={closingPositionId}
           />
@@ -1666,9 +1712,17 @@ function NewsEventRow({ event }: { event: NewsEvent }) {
   );
 }
 
-export function AccountSummaryBand({ summary }: { summary: AccountSummary | null }) {
+export function AccountSummaryBand({
+  summary,
+  transferringAllSwaps,
+  onTransferAllSwaps,
+}: {
+  summary: AccountSummary | null;
+  transferringAllSwaps: boolean;
+  onTransferAllSwaps: () => void;
+}) {
   return (
-    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-5">
+    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-6">
       <AccountMetric label="Account" value={summary?.accountId ?? "DEMO-ACCOUNT-001"} />
       <AccountMetric
         label="Equity"
@@ -1686,6 +1740,16 @@ export function AccountSummaryBand({ summary }: { summary: AccountSummary | null
         value={formatOptionalPercent(summary?.marginRatio)}
       />
       <AccountMetric label="Free margin" value={formatOptionalJpy(summary?.freeMargin)} />
+      <div className="flex items-center bg-[#161b22] px-3 py-2">
+        <button
+          type="button"
+          disabled={transferringAllSwaps}
+          onClick={onTransferAllSwaps}
+          className="w-full border border-[#d29922]/60 px-2 py-2 font-mono text-[10px] uppercase text-[#d29922] hover:bg-[#d29922]/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {transferringAllSwaps ? "Transferring..." : "Transfer all swap"}
+        </button>
+      </div>
     </section>
   );
 }
@@ -1992,12 +2056,14 @@ export function PositionDetailPanel({
   position,
   submittingExitOrder,
   submittingOcoPositionId,
+  transferringSwapPositionId,
   onCancelExitOrder,
   onCancelOcoOrder,
   onClose,
   onExitOrderDraftChange,
   onSubmitExitOrder,
   onSubmitOcoOrder,
+  onTransferSwap,
 }: {
   cancelingExitOrderId: number | null;
   cancelingOcoGroupId: string | null;
@@ -2006,12 +2072,14 @@ export function PositionDetailPanel({
   position: PositionSummary | null;
   submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
   submittingOcoPositionId: number | null;
+  transferringSwapPositionId: number | null;
   onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelOcoOrder: (positionId: number, groupId: string) => void;
   onClose: (id: number) => void;
   onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
   onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
+  onTransferSwap: (position: PositionSummary) => void;
 }) {
   if (!position) {
     return (
@@ -2109,7 +2177,7 @@ export function PositionDetailPanel({
           onChange={onExitOrderDraftChange}
           onSubmit={onSubmitExitOrder}
         />
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <button
             type="button"
             disabled={!canSubmitOco || submittingOcoPositionId === position.id}
@@ -2117,6 +2185,14 @@ export function PositionDetailPanel({
             className="border border-[#d29922]/60 px-2 py-2 font-mono text-[10px] uppercase text-[#d29922] hover:bg-[#d29922]/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submittingOcoPositionId === position.id ? "Setting..." : "Set OCO"}
+          </button>
+          <button
+            type="button"
+            disabled={transferringSwapPositionId === position.id}
+            onClick={() => onTransferSwap(position)}
+            className="border border-[#d29922]/60 px-2 py-2 font-mono text-[10px] uppercase text-[#d29922] hover:bg-[#d29922]/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {transferringSwapPositionId === position.id ? "Moving..." : "Transfer swap"}
           </button>
           <button
             type="button"

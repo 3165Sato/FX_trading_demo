@@ -206,6 +206,20 @@ export type SwapRolloverResult = {
   appliedAt: string;
 };
 
+export type PositionSwapTransferResult = {
+  positionId: number;
+  transferredSwap: number;
+  balanceAfter: number;
+  transferredAt: string;
+};
+
+export type SwapTransferAllResult = {
+  transferredPositions: number;
+  totalTransferredSwap: number;
+  balanceAfter: number;
+  transferredAt: string;
+};
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
@@ -487,6 +501,18 @@ export async function closePosition(id: number): Promise<PositionCloseResult> {
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${id}/close`;
 
   return fetchWithRetry<PositionCloseResult>(requestUrl, { method: "POST" });
+}
+
+export async function transferPositionSwap(id: number): Promise<PositionSwapTransferResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${id}/swap-transfer`;
+
+  return fetchWithRetry<PositionSwapTransferResult>(requestUrl, { method: "POST" });
+}
+
+export async function transferAllPositionSwaps(): Promise<SwapTransferAllResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/swap-transfer`;
+
+  return fetchWithRetry<SwapTransferAllResult>(requestUrl, { method: "POST" });
 }
 
 export async function placePositionExitOrder(
