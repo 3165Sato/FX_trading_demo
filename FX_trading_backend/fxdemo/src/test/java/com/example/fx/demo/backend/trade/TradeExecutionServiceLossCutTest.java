@@ -127,6 +127,7 @@ class TradeExecutionServiceLossCutTest {
                 new BigDecimal("1000000"),
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
+                BigDecimal.ZERO,
                 new BigDecimal("1000000"),
                 new BigDecimal("100000"),
                 new BigDecimal("900000"),
@@ -146,6 +147,7 @@ class TradeExecutionServiceLossCutTest {
                 "JPY",
                 new BigDecimal("154.900"),
                 new BigDecimal("-100"),
+                BigDecimal.ZERO,
                 LocalDateTime.of(2026, 6, 26, 12, 0),
                 new BigDecimal("6200"),
                 LocalDateTime.of(2026, 6, 26, 11, 0),
@@ -186,6 +188,7 @@ class TradeExecutionServiceLossCutTest {
                 new BigDecimal("1000"),
                 new BigDecimal("154.900"),
                 new BigDecimal("-100"),
+                BigDecimal.ZERO,
                 "JPY",
                 now,
                 execution

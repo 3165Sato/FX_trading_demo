@@ -37,6 +37,7 @@ public class PositionValuationCalculator {
                 position.quoteCurrency(),
                 currentPrice,
                 unrealizedPnl,
+                BigDecimal.ZERO,
                 position.updatedAt(),
                 requiredMargin,
                 position.updatedAt(),

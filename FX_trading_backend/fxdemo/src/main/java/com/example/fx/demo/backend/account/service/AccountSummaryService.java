@@ -58,8 +58,9 @@ public class AccountSummaryService {
                 : scaleJpy(account.getRealizedPnl());
         BigDecimal balance = baseBalance(account);
         BigDecimal unrealizedPnl = sumUnrealizedPnl(positions, midRates);
+        BigDecimal unrealizedSwap = sumUnrealizedSwap(positions);
         BigDecimal usedMargin = sumUsedMargin(positions);
-        BigDecimal equity = addNullable(balance, unrealizedPnl);
+        BigDecimal equity = addNullable(addNullable(balance, unrealizedPnl), unrealizedSwap);
         BigDecimal freeMargin = subtractNullable(equity, usedMargin);
         BigDecimal marginRatio = calculateMarginRatio(equity, usedMargin);
         String status = statusOf(marginRatio);
@@ -70,6 +71,7 @@ public class AccountSummaryService {
                 scaleJpy(balance),
                 realizedPnl,
                 unrealizedPnl,
+                unrealizedSwap,
                 scaleJpy(equity),
                 usedMargin,
                 scaleJpy(freeMargin),
@@ -90,6 +92,17 @@ public class AccountSummaryService {
                 return null;
             }
             total = total.add(converted);
+        }
+        return scaleJpy(total);
+    }
+
+    private BigDecimal sumUnrealizedSwap(List<PositionResponse> positions) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (PositionResponse position : positions) {
+            if (position.accruedSwap() == null) {
+                continue;
+            }
+            total = total.add(position.accruedSwap());
         }
         return scaleJpy(total);
     }

@@ -12,6 +12,7 @@ public record PositionCloseResponse(
         BigDecimal quantity,
         BigDecimal closePrice,
         BigDecimal realizedPnl,
+        BigDecimal realizedSwap,
         String realizedCurrency,
         LocalDateTime closedAt,
         OrderResultResponse execution

@@ -42,6 +42,9 @@ public class Position extends BaseEntity {
 
     private BigDecimal unrealizedPnl;
 
+    @Column(precision = 19, scale = 4)
+    private BigDecimal accruedSwap = BigDecimal.ZERO;
+
     public Position() {
     }
 
@@ -139,5 +142,13 @@ public class Position extends BaseEntity {
 
     public void setUnrealizedPnl(BigDecimal unrealizedPnl) {
         this.unrealizedPnl = unrealizedPnl;
+    }
+
+    public BigDecimal getAccruedSwap() {
+        return accruedSwap;
+    }
+
+    public void setAccruedSwap(BigDecimal accruedSwap) {
+        this.accruedSwap = accruedSwap;
     }
 }

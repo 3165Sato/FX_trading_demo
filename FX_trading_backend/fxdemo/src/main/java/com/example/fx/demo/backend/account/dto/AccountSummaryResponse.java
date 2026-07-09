@@ -8,6 +8,7 @@ public record AccountSummaryResponse(
         BigDecimal balance,
         BigDecimal realizedPnl,
         BigDecimal unrealizedPnl,
+        BigDecimal unrealizedSwap,
         BigDecimal equity,
         BigDecimal usedMargin,
         BigDecimal freeMargin,

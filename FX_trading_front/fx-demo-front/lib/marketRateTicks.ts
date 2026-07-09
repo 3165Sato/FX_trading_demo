@@ -149,6 +149,7 @@ export type PositionSummary = {
   quoteCurrency: string;
   currentPrice: number | null;
   unrealizedPnl: number | null;
+  accruedSwap: number | null;
   updatedAt: string;
   requiredMargin: number | null;
   openedAt: string | null;
@@ -162,6 +163,7 @@ export type PositionCloseResult = {
   quantity: number;
   closePrice: number;
   realizedPnl: number;
+  realizedSwap: number;
   realizedCurrency: string;
   closedAt: string;
   execution: OrderResult;
@@ -180,6 +182,7 @@ export type AccountSummary = {
   balance: number | null;
   realizedPnl: number | null;
   unrealizedPnl: number | null;
+  unrealizedSwap: number | null;
   equity: number | null;
   usedMargin: number | null;
   freeMargin: number | null;
@@ -194,6 +197,13 @@ export type EquitySnapshot = {
   equity: number;
   usedMargin: number | null;
   marginRatio: number | null;
+};
+
+export type SwapRolloverResult = {
+  days: number;
+  appliedPositions: number;
+  totalAccruedSwap: number;
+  appliedAt: string;
 };
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -554,6 +564,16 @@ export async function fetchEquityHistory(
   const requestUrl = `${getApiBaseUrl()}/api/trade/account/equity-history?${params.toString()}`;
 
   return fetchWithRetry<EquitySnapshot[]>(requestUrl);
+}
+
+export async function triggerSwapRollover(days = 1): Promise<SwapRolloverResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/market/swap/rollover`;
+
+  return fetchWithRetry<SwapRolloverResult>(requestUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ days }),
+  });
 }
 
 async function fetchWithRetry<T>(

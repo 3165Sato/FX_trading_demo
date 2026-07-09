@@ -460,6 +460,7 @@ class TriggerOrderServiceExitOrderTest {
                 new BigDecimal("1000"),
                 new BigDecimal("156.000"),
                 new BigDecimal("1000"),
+                BigDecimal.ZERO,
                 "JPY",
                 now,
                 execution

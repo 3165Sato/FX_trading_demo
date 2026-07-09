@@ -212,6 +212,7 @@ public class PositionService {
         position.setStatus(PositionStatus.OPEN);
         position.setOpenedAt(openedAt);
         position.setOpenTradeId(openTradeId);
+        position.setAccruedSwap(BigDecimal.ZERO);
         return positionRepository.save(position);
     }
 
@@ -264,6 +265,9 @@ public class PositionService {
         }
         BigDecimal realizedPnl = calculateRealizedPnl(position, closePrice)
                 .setScale(currencyPair.getPriceScale(), RoundingMode.HALF_UP);
+        BigDecimal realizedSwap = position.getAccruedSwap() == null
+                ? BigDecimal.ZERO
+                : position.getAccruedSwap().setScale(0, RoundingMode.HALF_UP);
 
         FxOrder order = createExecutedOrder(account, currencyPair, closeSide, position.getQuantity(), closePrice, source, now);
         Trade trade = createTrade(
@@ -281,9 +285,10 @@ public class PositionService {
         position.setClosedAt(now);
         position.setCloseTradeId(trade.getId());
         position.setUnrealizedPnl(null);
+        position.setAccruedSwap(BigDecimal.ZERO);
         Position savedPosition = positionRepository.save(position);
 
-        reflectRealizedPnl(account, realizedPnl, currencyPair.getQuoteCurrency());
+        reflectRealizedPnl(account, realizedPnl, currencyPair.getQuoteCurrency(), realizedSwap);
         expirePendingExitOrders(savedPosition.getId());
 
         return new PositionCloseResponse(
@@ -293,6 +298,7 @@ public class PositionService {
                 savedPosition.getQuantity(),
                 closePrice,
                 realizedPnl,
+                realizedSwap,
                 currencyPair.getQuoteCurrency(),
                 now,
                 new OrderResultResponse(toOrderResponse(order), toTradeResponse(trade))
@@ -346,15 +352,17 @@ public class PositionService {
         return tradeRepository.save(trade);
     }
 
-    private void reflectRealizedPnl(Account account, BigDecimal realizedPnl, String quoteCurrency) {
+    private void reflectRealizedPnl(Account account, BigDecimal realizedPnl, String quoteCurrency, BigDecimal realizedSwap) {
         BigDecimal realizedJpy = currencyConverter.toJpy(realizedPnl, quoteCurrency, loadMidRates());
         if (realizedJpy == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "実現損益をJPYへ換算できません。");
         }
+        BigDecimal swapJpy = realizedSwap == null ? BigDecimal.ZERO : realizedSwap;
+        BigDecimal realizedTotalJpy = realizedJpy.add(swapJpy);
         BigDecimal currentRealized = account.getRealizedPnl() == null ? BigDecimal.ZERO : account.getRealizedPnl();
         BigDecimal currentBalance = account.getBalance() == null ? BigDecimal.ZERO : account.getBalance();
-        account.setRealizedPnl(currentRealized.add(realizedJpy).setScale(0, RoundingMode.HALF_UP));
-        account.setBalance(currentBalance.add(realizedJpy).setScale(0, RoundingMode.HALF_UP));
+        account.setRealizedPnl(currentRealized.add(realizedTotalJpy).setScale(0, RoundingMode.HALF_UP));
+        account.setBalance(currentBalance.add(realizedTotalJpy).setScale(0, RoundingMode.HALF_UP));
         accountRepository.save(account);
     }
 
@@ -445,6 +453,7 @@ public class PositionService {
                 scale == null ? null : scale.quoteCurrency(),
                 currentPrice,
                 unrealizedPnl,
+                position.getAccruedSwap() == null ? BigDecimal.ZERO : position.getAccruedSwap(),
                 position.getUpdatedAt(),
                 requiredMargin,
                 position.getOpenedAt(),

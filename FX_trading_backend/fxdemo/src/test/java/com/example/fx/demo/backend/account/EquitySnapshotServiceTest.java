@@ -136,6 +136,7 @@ class EquitySnapshotServiceTest {
                 decimal(balance),
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
+                BigDecimal.ZERO,
                 decimal(equity),
                 decimal(usedMargin),
                 BigDecimal.ZERO,

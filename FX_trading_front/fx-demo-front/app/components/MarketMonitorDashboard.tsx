@@ -27,6 +27,7 @@ import {
   placePendingOrder,
   placeMarketOrder,
   triggerNewsEvent,
+  triggerSwapRollover,
   type AccountSummary,
   type AlertSeverity,
   type EquitySnapshot,
@@ -139,6 +140,9 @@ export function MarketMonitorDashboard() {
   const [submittingOcoPositionId, setSubmittingOcoPositionId] = useState<number | null>(null);
   const [cancelingOcoGroupId, setCancelingOcoGroupId] = useState<string | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
+  const [swapRolloverSubmitting, setSwapRolloverSubmitting] = useState(false);
+  const [swapRolloverMessage, setSwapRolloverMessage] = useState<string | null>(null);
+  const [swapRolloverError, setSwapRolloverError] = useState<string | null>(null);
   const previousRatesRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
@@ -502,6 +506,7 @@ export function MarketMonitorDashboard() {
     positionsError ??
     pnlSummaryError ??
     accountSummaryError ??
+    swapRolloverError ??
     newsEventsError;
 
   const setActiveScreen = (nextScreen: Screen) => {
@@ -521,6 +526,25 @@ export function MarketMonitorDashboard() {
       setNewsEventsError(getErrorMessage(error));
     } finally {
       setNewsSubmittingDirection(null);
+    }
+  };
+
+  const triggerManualSwapRollover = async () => {
+    setSwapRolloverSubmitting(true);
+    try {
+      const result = await triggerSwapRollover(1);
+      setSwapRolloverMessage(
+        `ROLLOVER ${result.appliedPositions} positions / ${formatOptionalJpy(result.totalAccruedSwap)}`,
+      );
+      setSwapRolloverError(null);
+      void loadPositions();
+      void loadPnlSummary();
+      void loadAccountSummary();
+      void loadEquityHistory();
+    } catch (error) {
+      setSwapRolloverError(getErrorMessage(error));
+    } finally {
+      setSwapRolloverSubmitting(false);
     }
   };
 
@@ -855,12 +879,15 @@ export function MarketMonitorDashboard() {
             spreadStats={spreadStats}
             spreadStatsError={spreadStatsError}
             spreadStatsLoading={spreadStatsLoading}
+            swapRolloverMessage={swapRolloverMessage}
+            swapRolloverSubmitting={swapRolloverSubmitting}
             ticks={ticks}
             ticksLoading={ticksLoading}
             onSelectPair={selectMonitorCurrencyPair}
             onSelectEquityHistoryRange={selectEquityHistoryRange}
             onRetryEquityHistory={loadEquityHistory}
             onTriggerNews={triggerSelectedNewsEvent}
+            onTriggerSwapRollover={triggerManualSwapRollover}
           />
         ) : screen === "trading" ? (
           <TradingScreen
@@ -1510,29 +1537,49 @@ export function NewsEventPanel({
   activePair,
   events,
   submittingDirection,
+  swapRolloverMessage,
+  swapRolloverSubmitting,
   onTrigger,
+  onTriggerSwapRollover,
 }: {
   activePair: string;
   events: NewsEvent[];
   submittingDirection: NewsDirection | null;
+  swapRolloverMessage: string | null;
+  swapRolloverSubmitting: boolean;
   onTrigger: (direction: NewsDirection) => void;
+  onTriggerSwapRollover: () => void;
 }) {
+  const operationDisabled = submittingDirection !== null || swapRolloverSubmitting;
+
   return (
     <section className="flex min-h-[174px] max-h-[260px] flex-col overflow-hidden border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Fictional news" meta={activePair} />
       <div className="grid flex-none grid-cols-2 gap-px bg-[#262d38]">
         <NewsTriggerButton
           direction="UP"
-          disabled={submittingDirection !== null}
+          disabled={operationDisabled}
           loading={submittingDirection === "UP"}
           onTrigger={onTrigger}
         />
         <NewsTriggerButton
           direction="DOWN"
-          disabled={submittingDirection !== null}
+          disabled={operationDisabled}
           loading={submittingDirection === "DOWN"}
           onTrigger={onTrigger}
         />
+      </div>
+      <div className="flex-none border-b border-[#262d38] bg-[#0d1117] px-3 py-2">
+        <RolloverTriggerButton
+          disabled={operationDisabled}
+          loading={swapRolloverSubmitting}
+          onTrigger={onTriggerSwapRollover}
+        />
+        {swapRolloverMessage && (
+          <div className="mt-2 truncate font-mono text-[10px] text-[#d29922]">
+            {swapRolloverMessage}
+          </div>
+        )}
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
         {events.length === 0 ? (
@@ -1544,6 +1591,28 @@ export function NewsEventPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function RolloverTriggerButton({
+  disabled,
+  loading,
+  onTrigger,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  onTrigger: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onTrigger}
+      className="flex min-h-[42px] w-full flex-col justify-center border border-[#d29922]/40 bg-[#161b22] px-3 py-2 text-left text-[#d29922] transition-colors hover:bg-[#211a0d] disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <div className="font-mono text-xs font-semibold">{loading ? "Applying..." : "Rollover"}</div>
+      <div className="mt-1 text-[10px] uppercase text-[#768390]">swap day</div>
+    </button>
   );
 }
 
@@ -1599,12 +1668,17 @@ function NewsEventRow({ event }: { event: NewsEvent }) {
 
 export function AccountSummaryBand({ summary }: { summary: AccountSummary | null }) {
   return (
-    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-4">
+    <section className="grid gap-px overflow-hidden border border-[#262d38] bg-[#262d38] md:grid-cols-5">
       <AccountMetric label="Account" value={summary?.accountId ?? "DEMO-ACCOUNT-001"} />
       <AccountMetric
         label="Equity"
         tone={pnlTone(summary?.unrealizedPnl ?? null)}
         value={formatOptionalJpy(summary?.equity)}
+      />
+      <AccountMetric
+        label="Swap"
+        tone={pnlTone(summary?.unrealizedSwap ?? null)}
+        value={formatOptionalJpy(summary?.unrealizedSwap)}
       />
       <AccountMetric
         label="Margin level"
@@ -1833,13 +1907,14 @@ export function PositionsTable({
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Positions" meta={`${positions.length} open`} />
-      <div className="grid grid-cols-[76px_58px_1fr_1fr_1fr_1fr_1fr_92px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-[76px_58px_1fr_1fr_1fr_1fr_1fr_1fr_92px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>Pair</span>
         <span>Side</span>
         <span className="text-right">Units</span>
         <span className="text-right">Open</span>
         <span className="text-right">Current</span>
         <span className="text-right">P&L</span>
+        <span className="text-right">Swap</span>
         <span className="text-right">Margin</span>
         <span className="text-center">Exit</span>
       </div>
@@ -1872,12 +1947,13 @@ function PositionRow({
 }) {
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
   const pnlClass = pnlToneClass(position.unrealizedPnl);
+  const swapClass = pnlToneClass(position.accruedSwap);
   const badges = exitOrderBadges(position);
   return (
     <button
       type="button"
       onClick={() => onSelect(position.id)}
-      className={`grid w-full grid-cols-[76px_58px_1fr_1fr_1fr_1fr_1fr_92px] items-center gap-2 border-l-2 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] last:border-b-0 ${
+      className={`grid w-full grid-cols-[76px_58px_1fr_1fr_1fr_1fr_1fr_1fr_92px] items-center gap-2 border-l-2 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] last:border-b-0 ${
         selected ? "border-l-[#58a6ff] bg-[#101923]" : "border-l-transparent hover:bg-[#1b222b]"
       }`}
     >
@@ -1895,6 +1971,7 @@ function PositionRow({
           ? "--"
           : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
       </span>
+      <span className={`text-right ${swapClass}`}>{formatOptionalJpy(position.accruedSwap)}</span>
       <span className="text-right text-[#adbac7]">{formatOptionalJpy(position.requiredMargin)}</span>
       <span className="flex justify-center gap-1">
         {badges.length === 0 ? (
@@ -1947,6 +2024,7 @@ export function PositionDetailPanel({
 
   const sideClass = position.side === "LONG" ? "text-[#4493f8]" : "text-[#f85149]";
   const pnlClass = pnlToneClass(position.unrealizedPnl);
+  const swapClass = pnlToneClass(position.accruedSwap);
   const activeExitOrders = position.exitOrders.filter(isActivePendingOrder);
   const tpOrder = findPositionExitOrder(position, "TP");
   const slOrder = findPositionExitOrder(position, "SL");
@@ -1966,6 +2044,7 @@ export function PositionDetailPanel({
           value={position.unrealizedPnl === null ? "--" : formatCurrencyAmount(position.quoteCurrency, position.unrealizedPnl)}
           className={pnlClass}
         />
+        <DetailMetric label="Swap" value={formatOptionalJpy(position.accruedSwap)} className={swapClass} />
         <DetailMetric label="Margin" value={formatOptionalJpy(position.requiredMargin)} />
         <DetailMetric label="Opened" value={position.openedAt ? formatTime(position.openedAt) : "--"} />
       </div>

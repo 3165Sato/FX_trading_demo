@@ -13,6 +13,7 @@ public record PositionResponse(
         String quoteCurrency,
         BigDecimal currentPrice,
         BigDecimal unrealizedPnl,
+        BigDecimal accruedSwap,
         LocalDateTime updatedAt,
         BigDecimal requiredMargin,
         LocalDateTime openedAt,

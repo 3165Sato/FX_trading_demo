@@ -160,12 +160,15 @@ export function MonitorScreen({
   spreadStats,
   spreadStatsError,
   spreadStatsLoading,
+  swapRolloverMessage,
+  swapRolloverSubmitting,
   ticks,
   ticksLoading,
   onSelectPair,
   onSelectEquityHistoryRange,
   onRetryEquityHistory,
   onTriggerNews,
+  onTriggerSwapRollover,
 }: {
   activeAlerts: number;
   activePair: string;
@@ -183,12 +186,15 @@ export function MonitorScreen({
   spreadStats?: SpreadStats;
   spreadStatsError: string | null;
   spreadStatsLoading: boolean;
+  swapRolloverMessage: string | null;
+  swapRolloverSubmitting: boolean;
   ticks: MarketRateTick[];
   ticksLoading: boolean;
   onSelectPair: (currencyPair: string) => void;
   onSelectEquityHistoryRange: (range: EquityHistoryRange) => void;
   onRetryEquityHistory: () => void;
   onTriggerNews: (direction: NewsDirection) => void;
+  onTriggerSwapRollover: () => void;
 }) {
   return (
     <div className="grid min-h-0 flex-1 gap-3 overflow-hidden xl:grid-cols-[372px_minmax(0,1fr)_360px]">
@@ -254,7 +260,10 @@ export function MonitorScreen({
           activePair={activePair}
           events={newsEvents}
           submittingDirection={newsSubmittingDirection}
+          swapRolloverMessage={swapRolloverMessage}
+          swapRolloverSubmitting={swapRolloverSubmitting}
           onTrigger={onTriggerNews}
+          onTriggerSwapRollover={onTriggerSwapRollover}
         />
         <AlertPanel alerts={alerts} activeCount={activeAlerts} />
       </aside>
