@@ -7,7 +7,9 @@ import {
   cancelPositionOcoOrder,
   cancelPendingOrder,
   closePosition,
+  depositCash,
   fetchAccountSummary,
+  fetchCashTransactions,
   fetchEquityHistory,
   fetchLatestMarketRates,
   fetchMarketAlerts,
@@ -30,8 +32,10 @@ import {
   triggerSwapRollover,
   transferAllPositionSwaps,
   transferPositionSwap,
+  withdrawCash,
   type AccountSummary,
   type AlertSeverity,
+  type CashTransaction,
   type EquitySnapshot,
   type ExitOrderType,
   type MarketAlert,
@@ -65,6 +69,7 @@ const NEWS_EVENT_LIMIT = 10;
 const ALERT_LIMIT = 50;
 const TRADE_LIMIT = 50;
 const ORDER_LIMIT = 50;
+const CASH_TRANSACTION_LIMIT = 50;
 const EQUITY_HISTORY_DEFAULT_LIMIT = 300;
 const EQUITY_HISTORY_MAX_LIMIT = 1000;
 const SCREEN_STORAGE_KEY = "demofx.screen";
@@ -90,6 +95,7 @@ export function MarketMonitorDashboard() {
   const [positions, setPositions] = useState<PositionSummary[]>([]);
   const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
   const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
+  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([]);
   const [equityHistory, setEquityHistory] = useState<EquitySnapshot[]>([]);
   const [equityHistoryRange, setEquityHistoryRange] = useState<EquityHistoryRange>("5m");
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
@@ -123,9 +129,16 @@ export function MarketMonitorDashboard() {
   const [tradesLoading, setTradesLoading] = useState(true);
   const [pendingOrderHistoryLoading, setPendingOrderHistoryLoading] = useState(true);
   const [pnlSummaryLoading, setPnlSummaryLoading] = useState(true);
+  const [cashTransactionsLoading, setCashTransactionsLoading] = useState(true);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [newsEventsError, setNewsEventsError] = useState<string | null>(null);
   const [spreadStatsError, setSpreadStatsError] = useState<string | null>(null);
+  const [cashTransactionsError, setCashTransactionsError] = useState<string | null>(null);
+  const [cashActionError, setCashActionError] = useState<string | null>(null);
+  const [cashActionMessage, setCashActionMessage] = useState<string | null>(null);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [withdrawalAmount, setWithdrawalAmount] = useState("");
+  const [submittingCashAction, setSubmittingCashAction] = useState<"DEPOSIT" | "WITHDRAWAL" | null>(null);
   const [lastOrderMessage, setLastOrderMessage] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [clock, setClock] = useState("--:--:--");
@@ -369,6 +382,18 @@ export function MarketMonitorDashboard() {
     }
   }, []);
 
+  const loadCashTransactions = useCallback(async () => {
+    try {
+      const transactions = await fetchCashTransactions(CASH_TRANSACTION_LIMIT);
+      setCashTransactions(transactions);
+      setCashTransactionsError(null);
+    } catch (error) {
+      setCashTransactionsError(getErrorMessage(error));
+    } finally {
+      setCashTransactionsLoading(false);
+    }
+  }, []);
+
   const loadEquityHistory = useCallback(async () => {
     try {
       const request = equityHistoryRequest(equityHistoryRange);
@@ -418,6 +443,7 @@ export function MarketMonitorDashboard() {
       void loadPositions();
       void loadPnlSummary();
       void loadAccountSummary();
+      void loadCashTransactions();
     };
     const initialTimeoutId = window.setTimeout(loadTradeData, 0);
     const intervalId = window.setInterval(loadTradeData, 5000);
@@ -425,7 +451,7 @@ export function MarketMonitorDashboard() {
       window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [loadAccountSummary, loadOrders, loadPendingOrderHistory, loadPendingOrders, loadPnlSummary, loadPositions, loadTrades]);
+  }, [loadAccountSummary, loadCashTransactions, loadOrders, loadPendingOrderHistory, loadPendingOrders, loadPnlSummary, loadPositions, loadTrades]);
 
   useEffect(() => {
     const initialTimeoutId = window.setTimeout(loadEquityHistory, 0);
@@ -567,8 +593,46 @@ export function MarketMonitorDashboard() {
     void loadPositions();
     void loadPnlSummary();
     void loadAccountSummary();
+    void loadCashTransactions();
     void loadEquityHistory();
     void loadNewsEvents();
+  };
+
+  const submitCashAction = async (type: "DEPOSIT" | "WITHDRAWAL") => {
+    const input = type === "DEPOSIT" ? depositAmount : withdrawalAmount;
+    const amount = Number(input);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setCashActionError("Amount must be greater than zero.");
+      setCashActionMessage(null);
+      return;
+    }
+
+    setSubmittingCashAction(type);
+    try {
+      const result = type === "DEPOSIT"
+        ? await depositCash(amount)
+        : await withdrawCash(amount);
+      setCashTransactions((current) => [
+        result.transaction,
+        ...current.filter((transaction) => transaction.id !== result.transaction.id),
+      ].slice(0, CASH_TRANSACTION_LIMIT));
+      setCashActionMessage(
+        `${type} ${formatOptionalJpy(result.transaction.amount)} / balance ${formatOptionalJpy(result.balanceAfter)}`,
+      );
+      setCashActionError(null);
+      if (type === "DEPOSIT") {
+        setDepositAmount("");
+      } else {
+        setWithdrawalAmount("");
+      }
+      void loadAccountSummary();
+      void loadCashTransactions();
+    } catch (error) {
+      setCashActionError(getErrorMessage(error));
+      setCashActionMessage(null);
+    } finally {
+      setSubmittingCashAction(null);
+    }
   };
 
   const submitMarketOrder = async (side: OrderSide) => {
@@ -992,6 +1056,13 @@ export function MarketMonitorDashboard() {
           />
         ) : (
           <HistoryScreen
+            accountSummary={accountSummary}
+            cashActionError={cashActionError}
+            cashActionMessage={cashActionMessage}
+            cashTransactions={cashTransactions}
+            cashTransactionsError={cashTransactionsError}
+            cashTransactionsLoading={cashTransactionsLoading}
+            depositAmount={depositAmount}
             pendingOrderHistory={pendingOrderHistory}
             pendingOrderHistoryError={pendingOrderHistoryError}
             pendingOrderHistoryLoading={pendingOrderHistoryLoading}
@@ -1001,7 +1072,12 @@ export function MarketMonitorDashboard() {
             trades={trades}
             tradesError={tradesError}
             tradesLoading={tradesLoading}
+            submittingCashAction={submittingCashAction}
+            withdrawalAmount={withdrawalAmount}
+            onDepositAmountChange={setDepositAmount}
             onSelectPair={selectTradingCurrencyPair}
+            onSubmitCashAction={submitCashAction}
+            onWithdrawalAmountChange={setWithdrawalAmount}
           />
         )}
       </div>
@@ -2375,17 +2451,166 @@ export function PnlSummaryPanel({
   );
 }
 
-export function FutureHistoryPanel() {
+export function CashTransactionsPanel({
+  actionError,
+  actionMessage,
+  depositAmount,
+  error,
+  loading,
+  summary,
+  submittingAction,
+  transactions,
+  withdrawalAmount,
+  onDepositAmountChange,
+  onSubmit,
+  onWithdrawalAmountChange,
+}: {
+  actionError: string | null;
+  actionMessage: string | null;
+  depositAmount: string;
+  error: string | null;
+  loading: boolean;
+  summary: AccountSummary | null;
+  submittingAction: "DEPOSIT" | "WITHDRAWAL" | null;
+  transactions: CashTransaction[];
+  withdrawalAmount: string;
+  onDepositAmountChange: (value: string) => void;
+  onSubmit: (type: "DEPOSIT" | "WITHDRAWAL") => void;
+  onWithdrawalAmountChange: (value: string) => void;
+}) {
+  const withdrawalDisabled = summary?.withdrawable === null || summary?.withdrawable === undefined;
   return (
-    <section className="min-h-[220px] border border-[#262d38] bg-[#161b22]">
-      <PanelHeader title="Future reports" meta="C-11 / C-12" />
-      <div className="grid min-h-[166px] place-items-center px-6 text-center">
-        <div>
-          <div className="font-mono text-sm font-semibold text-[#e6edf3]">Coming soon</div>
-          <div className="mt-2 text-sm leading-6 text-[#768390]">
-            Period P&L reports and cash transaction history will land here.
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[#262d38] bg-[#161b22]">
+      <PanelHeader title="Cash transactions" meta={`${transactions.length} records`} />
+      <div className="border-b border-[#262d38] px-3 py-3">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <div className="text-[10px] uppercase text-[#768390]">Withdrawable</div>
+            <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-[#e6edf3]">
+              {formatOptionalJpy(summary?.withdrawable)}
+            </div>
+          </div>
+          <div className="text-right font-mono text-[10px] tabular-nums text-[#768390]">
+            <div>Balance {formatOptionalJpy(summary?.balance)}</div>
+            <div className="mt-1">Free {formatOptionalJpy(summary?.freeMargin)}</div>
           </div>
         </div>
+
+        <div className="mt-3 grid gap-2">
+          <CashAmountControl
+            amount={depositAmount}
+            disabled={submittingAction !== null}
+            label="Deposit"
+            submitting={submittingAction === "DEPOSIT"}
+            onAmountChange={onDepositAmountChange}
+            onSubmit={() => onSubmit("DEPOSIT")}
+          />
+          <CashAmountControl
+            amount={withdrawalAmount}
+            disabled={submittingAction !== null || withdrawalDisabled}
+            label="Withdraw"
+            submitting={submittingAction === "WITHDRAWAL"}
+            onAmountChange={onWithdrawalAmountChange}
+            onSubmit={() => onSubmit("WITHDRAWAL")}
+          />
+        </div>
+
+        {actionError && (
+          <div className="mt-2 border border-[#f85149]/40 bg-[#2a1215] px-2 py-2 font-mono text-[10px] text-[#f0a8a4]">
+            {actionError}
+          </div>
+        )}
+        {actionMessage && (
+          <div className="mt-2 border border-[#3fb950]/40 bg-[#102218] px-2 py-2 font-mono text-[10px] text-[#7ee787]">
+            {actionMessage}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-[64px_1fr_72px] border-b border-[#262d38] px-3 py-2 font-mono text-[9px] uppercase text-[#768390]">
+        <span>Type</span>
+        <span className="text-right">Amount</span>
+        <span className="text-right">Time</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {loading && transactions.length === 0 ? (
+          <LoadingPanel label="Loading cash history..." compact />
+        ) : error ? (
+          <PanelError message={error} />
+        ) : transactions.length === 0 ? (
+          <EmptyPanel label="No cash transactions" compact />
+        ) : (
+          transactions.map((transaction) => (
+            <CashTransactionRow key={transaction.id} transaction={transaction} />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CashAmountControl({
+  amount,
+  disabled,
+  label,
+  submitting,
+  onAmountChange,
+  onSubmit,
+}: {
+  amount: string;
+  disabled: boolean;
+  label: string;
+  submitting: boolean;
+  onAmountChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_84px] gap-2">
+      <label className="min-w-0">
+        <span className="sr-only">{label} amount</span>
+        <input
+          value={amount}
+          onChange={(event) => onAmountChange(event.target.value)}
+          inputMode="numeric"
+          placeholder="JPY amount"
+          className="w-full border border-[#262d38] bg-[#0d1117] px-2 py-2 font-mono text-[11px] tabular-nums text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+        />
+      </label>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onSubmit}
+        className="border border-[#58a6ff]/50 px-2 py-2 font-mono text-[10px] uppercase text-[#58a6ff] hover:bg-[#58a6ff]/10 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {submitting ? "..." : label}
+      </button>
+    </div>
+  );
+}
+
+function CashTransactionRow({ transaction }: { transaction: CashTransaction }) {
+  const isDeposit = transaction.type === "DEPOSIT";
+  return (
+    <div className="grid grid-cols-[64px_1fr_72px] gap-2 border-b border-[#202832] px-3 py-2.5 font-mono text-[10px] last:border-b-0">
+      <span className={isDeposit ? "text-[#4493f8]" : "text-[#d29922]"}>
+        {isDeposit ? "DEPOSIT" : "WITHDRAW"}
+      </span>
+      <span className="text-right tabular-nums text-[#adbac7]">
+        {formatOptionalJpy(transaction.amount)}
+      </span>
+      <span className="text-right tabular-nums text-[#768390]">
+        {formatTime(transaction.completedAt ?? transaction.requestedAt)}
+      </span>
+    </div>
+  );
+}
+
+export function FutureHistoryPanel() {
+  return (
+    <section className="border border-[#262d38] bg-[#161b22]">
+      <div className="flex items-center justify-between px-3 py-2 font-mono text-[10px]">
+        <span className="text-[#768390]">Period P&amp;L report</span>
+        <span className="text-[#768390]">C-12 / Coming soon</span>
       </div>
     </section>
   );

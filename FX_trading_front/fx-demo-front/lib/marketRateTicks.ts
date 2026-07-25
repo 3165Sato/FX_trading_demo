@@ -186,9 +186,24 @@ export type AccountSummary = {
   equity: number | null;
   usedMargin: number | null;
   freeMargin: number | null;
+  withdrawable: number | null;
   marginRatio: number | null;
   lossCutThreshold: number;
   status: AccountMarginStatus;
+};
+
+export type CashTransaction = {
+  id: number;
+  type: "DEPOSIT" | "WITHDRAWAL";
+  amount: number;
+  status: "ACCEPTED" | "COMPLETED" | "FAILED" | "CANCELED";
+  requestedAt: string;
+  completedAt: string | null;
+};
+
+export type CashOperationResult = {
+  transaction: CashTransaction;
+  balanceAfter: number;
 };
 
 export type EquitySnapshot = {
@@ -575,6 +590,30 @@ export async function fetchAccountSummary(): Promise<AccountSummary> {
   const requestUrl = `${getApiBaseUrl()}/api/trade/account/summary`;
 
   return fetchWithRetry<AccountSummary>(requestUrl);
+}
+
+export async function fetchCashTransactions(limit = 50): Promise<CashTransaction[]> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/account/cash-transactions?limit=${limit}`;
+
+  return fetchWithRetry<CashTransaction[]>(requestUrl);
+}
+
+export async function depositCash(amount: number): Promise<CashOperationResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/account/deposits`;
+
+  return fetchWithRetry<CashOperationResult>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({ amount }),
+  });
+}
+
+export async function withdrawCash(amount: number): Promise<CashOperationResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/account/withdrawals`;
+
+  return fetchWithRetry<CashOperationResult>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify({ amount }),
+  });
 }
 
 export async function fetchEquityHistory(

@@ -131,6 +131,7 @@ class TradeExecutionServiceLossCutTest {
                 new BigDecimal("1000000"),
                 new BigDecimal("100000"),
                 new BigDecimal("900000"),
+                new BigDecimal("900000"),
                 new BigDecimal(marginRatio),
                 new BigDecimal("50"),
                 "ACTIVE"

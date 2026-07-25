@@ -12,6 +12,7 @@ public record AccountSummaryResponse(
         BigDecimal equity,
         BigDecimal usedMargin,
         BigDecimal freeMargin,
+        BigDecimal withdrawable,
         BigDecimal marginRatio,
         BigDecimal lossCutThreshold,
         String status

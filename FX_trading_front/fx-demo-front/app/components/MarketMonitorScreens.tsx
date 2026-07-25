@@ -2,6 +2,7 @@ import { useMemo } from "react";
 
 import type {
   AccountSummary,
+  CashTransaction,
   EquitySnapshot,
   ExitOrderType,
   MarketAlert,
@@ -23,6 +24,7 @@ import { MarketRateChart } from "./MarketRateChart";
 import {
   AccountSummaryBand,
   AlertPanel,
+  CashTransactionsPanel,
   EmptyPanel,
   ExecutionHistoryPanel,
   FutureHistoryPanel,
@@ -477,6 +479,13 @@ export function TradingScreen({
 }
 
 export function HistoryScreen({
+  accountSummary,
+  cashActionError,
+  cashActionMessage,
+  cashTransactions,
+  cashTransactionsError,
+  cashTransactionsLoading,
+  depositAmount,
   pendingOrderHistory,
   pendingOrderHistoryError,
   pendingOrderHistoryLoading,
@@ -486,8 +495,20 @@ export function HistoryScreen({
   trades,
   tradesError,
   tradesLoading,
+  submittingCashAction,
+  withdrawalAmount,
+  onDepositAmountChange,
   onSelectPair,
+  onSubmitCashAction,
+  onWithdrawalAmountChange,
 }: {
+  accountSummary: AccountSummary | null;
+  cashActionError: string | null;
+  cashActionMessage: string | null;
+  cashTransactions: CashTransaction[];
+  cashTransactionsError: string | null;
+  cashTransactionsLoading: boolean;
+  depositAmount: string;
   pendingOrderHistory: PendingOrder[];
   pendingOrderHistoryError: string | null;
   pendingOrderHistoryLoading: boolean;
@@ -497,7 +518,12 @@ export function HistoryScreen({
   trades: TradeSummary[];
   tradesError: string | null;
   tradesLoading: boolean;
+  submittingCashAction: "DEPOSIT" | "WITHDRAWAL" | null;
+  withdrawalAmount: string;
+  onDepositAmountChange: (value: string) => void;
   onSelectPair: (currencyPair: string) => void;
+  onSubmitCashAction: (type: "DEPOSIT" | "WITHDRAWAL") => void;
+  onWithdrawalAmountChange: (value: string) => void;
 }) {
   return (
     <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -520,6 +546,20 @@ export function HistoryScreen({
           error={pnlSummaryError}
           loading={pnlSummaryLoading}
           summary={pnlSummary}
+        />
+        <CashTransactionsPanel
+          actionError={cashActionError}
+          actionMessage={cashActionMessage}
+          depositAmount={depositAmount}
+          error={cashTransactionsError}
+          loading={cashTransactionsLoading}
+          summary={accountSummary}
+          submittingAction={submittingCashAction}
+          transactions={cashTransactions}
+          withdrawalAmount={withdrawalAmount}
+          onDepositAmountChange={onDepositAmountChange}
+          onSubmit={onSubmitCashAction}
+          onWithdrawalAmountChange={onWithdrawalAmountChange}
         />
         <FutureHistoryPanel />
       </div>

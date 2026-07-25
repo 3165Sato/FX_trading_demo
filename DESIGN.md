@@ -29,7 +29,7 @@ layout:
   monitor_center_split: "6 : 4" # 中央カラム縦配分 MainChart : EquityCurve
   ticklog_height: "188px" # 監視画面下部の全幅Tickログ
   trading_grid: "430px 1fr" # 左:PriceRef・OrderPanel・MarginGauge / 右:建玉・詳細・待機注文
-  history_grid: "1fr 360px" # 左:約定/注文履歴 / 右:損益サマリ・将来枠
+  history_grid: "1fr 360px" # 左:約定/注文履歴 / 右:損益サマリ・入出金・将来枠
 target_width: "1440px" # デスクトップ優先(監視室風・高密度)
 ---
 
@@ -85,7 +85,8 @@ target_width: "1440px" # デスクトップ優先(監視室風・高密度)
 
 - 左: ExecutionHistory(約定履歴: 時刻/ペア/売買/数量/約定価格/区分(新規・決済)/由来(手動・トリガー・TP/SL・ロスカット))
   / OrderHistory(注文・予約の全状態: PENDING/TRIGGERED/CANCELLED/REJECTED/EXPIRED を色分け)
-- 右: PnlSummary(通貨別の実現/含み損益) / **将来枠**(期間損益レポート C-12・入出金 C-11 の置き場を確保)
+- 右: PnlSummary(通貨別の実現/含み損益) / **CashTransactions**(出金可能額・入金/出金・履歴)
+  / **将来枠**(期間損益レポート C-12 の置き場を確保)
 
 ### コンポーネント方針
 
@@ -100,5 +101,5 @@ target_width: "1440px" # デスクトップ優先(監視室風・高密度)
 
 ### 将来枠の扱い
 
-- 未実装の機能(History の期間損益レポート・入出金など)は、実装時にレイアウトを作り直さずに済むよう、
+- 未実装の機能(History の期間損益レポートなど)は、実装時にレイアウトを作り直さずに済むよう、
   **場所とサイズを確保**しておく(プレースホルダ可)。

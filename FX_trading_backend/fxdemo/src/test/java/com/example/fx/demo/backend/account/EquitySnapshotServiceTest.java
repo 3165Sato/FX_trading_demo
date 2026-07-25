@@ -140,6 +140,7 @@ class EquitySnapshotServiceTest {
                 decimal(equity),
                 decimal(usedMargin),
                 BigDecimal.ZERO,
+                BigDecimal.ZERO,
                 decimal(marginRatio),
                 new BigDecimal("50"),
                 "SAFE"

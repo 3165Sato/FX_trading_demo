@@ -4,6 +4,7 @@ import com.example.fx.demo.backend.common.entity.BaseEntity;
 import com.example.fx.demo.backend.common.enums.CashTransactionStatus;
 import com.example.fx.demo.backend.common.enums.CashTransactionType;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Column;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
@@ -20,6 +21,7 @@ public class CashTransaction extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private CashTransactionType transactionType;
 
+    @Column(precision = 19, scale = 0)
     private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)
@@ -28,7 +30,7 @@ public class CashTransaction extends BaseEntity {
     private LocalDateTime requestedAt;
     private LocalDateTime completedAt;
 
-    protected CashTransaction() {
+    public CashTransaction() {
     }
 
     public Long getAccountId() {

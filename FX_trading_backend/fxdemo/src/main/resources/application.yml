@@ -70,3 +70,5 @@ demofx:
   equityHistory:
     enabled: true
     intervalSeconds: 5
+  cash:
+    maxDepositPerRequest: 100000000

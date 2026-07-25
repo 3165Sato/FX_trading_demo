@@ -62,6 +62,7 @@ public class AccountSummaryService {
         BigDecimal usedMargin = sumUsedMargin(positions);
         BigDecimal equity = addNullable(addNullable(balance, unrealizedPnl), unrealizedSwap);
         BigDecimal freeMargin = subtractNullable(equity, usedMargin);
+        BigDecimal withdrawable = calculateWithdrawable(balance, freeMargin);
         BigDecimal marginRatio = calculateMarginRatio(equity, usedMargin);
         String status = statusOf(marginRatio);
 
@@ -75,6 +76,7 @@ public class AccountSummaryService {
                 scaleJpy(equity),
                 usedMargin,
                 scaleJpy(freeMargin),
+                withdrawable,
                 marginRatio,
                 marginProperties.getLossCut().getThresholdPercent(),
                 status
@@ -123,6 +125,13 @@ public class AccountSummaryService {
             return null;
         }
         return equity.multiply(new BigDecimal("100")).divide(usedMargin, 2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal calculateWithdrawable(BigDecimal balance, BigDecimal freeMargin) {
+        if (balance == null || freeMargin == null) {
+            return null;
+        }
+        return scaleJpy(balance.min(freeMargin).max(BigDecimal.ZERO));
     }
 
     private String statusOf(BigDecimal marginRatio) {
