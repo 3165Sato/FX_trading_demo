@@ -114,6 +114,11 @@ export type PendingOrder = {
   ocoGroupId?: string | null;
 };
 
+export type PendingOrderAmendment = {
+  quantity?: number;
+  triggerPrice?: number;
+};
+
 export type IfdOrder = {
   entry: PendingOrder;
   exit: PendingOrder;
@@ -133,6 +138,7 @@ export type PositionExitOrder = {
   ocoGroupId: string | null;
   createdAt: string;
   triggeredAt: string | null;
+  parentOrderId: number | null;
 };
 
 export type PositionOcoOrder = {
@@ -469,6 +475,18 @@ export async function cancelPendingOrder(id: number): Promise<PendingOrder> {
   return fetchWithRetry<PendingOrder>(requestUrl, { method: "POST" });
 }
 
+export async function amendPendingOrder(
+  id: number,
+  amendment: PendingOrderAmendment,
+): Promise<PendingOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/orders/pending/${id}`;
+
+  return fetchWithRetry<PendingOrder>(requestUrl, {
+    method: "PATCH",
+    body: JSON.stringify(amendment),
+  });
+}
+
 export async function fetchTrades(
   currencyPair?: string,
   limit = 50,
@@ -553,6 +571,19 @@ export async function cancelPositionExitOrder(
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/exit-orders/${exitOrderId}`;
 
   return fetchWithRetry<PositionExitOrder>(requestUrl, { method: "DELETE" });
+}
+
+export async function amendPositionExitOrder(
+  positionId: number,
+  exitOrderId: number,
+  triggerPrice: number,
+): Promise<PositionExitOrder> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/exit-orders/${exitOrderId}`;
+
+  return fetchWithRetry<PositionExitOrder>(requestUrl, {
+    method: "PATCH",
+    body: JSON.stringify({ triggerPrice }),
+  });
 }
 
 export async function placePositionOcoOrder(

@@ -22,6 +22,7 @@ import com.example.fx.demo.backend.position.repository.PositionRepository;
 import com.example.fx.demo.backend.position.service.PositionService;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionExitOrderAmendRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderLegRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
 import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
@@ -137,6 +138,140 @@ class TriggerOrderServiceExitOrderTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(error -> ((ResponseStatusException) error).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void amendsStandaloneLongTakeProfitPrice() {
+        mockDefaultAccount();
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        mockMarketRate("155.120", "155.123");
+        TriggerOrder order = standaloneExitOrder();
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(order));
+        when(triggerOrderRepository.save(any(TriggerOrder.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        PositionExitOrderAmendRequest request = new PositionExitOrderAmendRequest();
+        request.setTriggerPrice(new BigDecimal("156.1236"));
+
+        var response = service.amendExitOrder(1L, 10L, request);
+
+        assertThat(response.triggerPrice()).isEqualByComparingTo("156.124");
+        assertThat(order.getQuantity()).isEqualByComparingTo("1000");
+    }
+
+    @Test
+    void rejectsOcoExitOrderAmendment() {
+        mockDefaultAccount();
+        mockOpenPosition(PositionSide.LONG);
+        TriggerOrder order = standaloneExitOrder();
+        order.setOcoGroupId("oco-1");
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(order));
+        PositionExitOrderAmendRequest request = new PositionExitOrderAmendRequest();
+        request.setTriggerPrice(new BigDecimal("156.000"));
+
+        assertThatThrownBy(() -> service.amendExitOrder(1L, 10L, request))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void rejectsExitOrderAmendmentWithInvalidDirectionWithoutChangingPrice() {
+        mockDefaultAccount();
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        mockMarketRate("155.120", "155.123");
+        TriggerOrder order = standaloneExitOrder();
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(order));
+        PositionExitOrderAmendRequest request = new PositionExitOrderAmendRequest();
+        request.setTriggerPrice(new BigDecimal("154.000"));
+
+        assertThatThrownBy(() -> service.amendExitOrder(1L, 10L, request))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(order.getTriggerPrice()).isEqualByComparingTo("156.000");
+    }
+
+    @Test
+    void rejectsExitOrderQuantityAmendment() {
+        PositionExitOrderAmendRequest request = new PositionExitOrderAmendRequest();
+        request.setTriggerPrice(new BigDecimal("156.000"));
+        request.setQuantity(new BigDecimal("500"));
+
+        assertThatThrownBy(() -> service.amendExitOrder(1L, 10L, request))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void rejectsWaitingExitOrderAmendment() {
+        mockDefaultAccount();
+        mockOpenPosition(PositionSide.LONG);
+        TriggerOrder order = standaloneExitOrder();
+        order.setStatus(TriggerOrderStatus.WAITING);
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(order));
+        PositionExitOrderAmendRequest request = exitAmendRequest("156.000");
+
+        assertResponseStatus(() -> service.amendExitOrder(1L, 10L, request), HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void rejectsMissingExitOrderAndPosition() {
+        mockDefaultAccount();
+        PositionExitOrderAmendRequest request = exitAmendRequest("156.000");
+        assertResponseStatus(() -> service.amendExitOrder(1L, 999L, request), HttpStatus.NOT_FOUND);
+
+        TriggerOrder order = standaloneExitOrder();
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(order));
+        assertResponseStatus(() -> service.amendExitOrder(999L, 10L, request), HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void hidesExitOrderOwnedByAnotherAccount() {
+        mockDefaultAccount();
+        Position position = org.mockito.Mockito.mock(Position.class);
+        when(position.getId()).thenReturn(1L);
+        when(position.getAccountId()).thenReturn(200L);
+        when(positionRepository.findById(1L)).thenReturn(Optional.of(position));
+        TriggerOrder order = standaloneExitOrder();
+        order.setAccountId(200L);
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(order));
+
+        assertResponseStatus(
+                () -> service.amendExitOrder(1L, 10L, exitAmendRequest("156.000")),
+                HttpStatus.NOT_FOUND
+        );
+    }
+
+    @Test
+    void rejectsExitOrderForClosedPosition() {
+        mockDefaultAccount();
+        Position position = org.mockito.Mockito.mock(Position.class);
+        when(position.getId()).thenReturn(1L);
+        when(position.getAccountId()).thenReturn(100L);
+        when(position.getStatus()).thenReturn(PositionStatus.CLOSED);
+        when(positionRepository.findById(1L)).thenReturn(Optional.of(position));
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(standaloneExitOrder()));
+
+        assertResponseStatus(
+                () -> service.amendExitOrder(1L, 10L, exitAmendRequest("156.000")),
+                HttpStatus.CONFLICT
+        );
+    }
+
+    @Test
+    void rejectsExitOrderWhenLatestRateIsUnavailable() {
+        mockDefaultAccount();
+        mockOpenPosition(PositionSide.LONG);
+        mockCurrencyPair();
+        when(triggerOrderRepository.findById(10L)).thenReturn(Optional.of(standaloneExitOrder()));
+        when(marketRateRepository.findByCurrencyPair(any(CurrencyPair.class))).thenReturn(Optional.empty());
+
+        assertResponseStatus(
+                () -> service.amendExitOrder(1L, 10L, exitAmendRequest("156.000")),
+                HttpStatus.CONFLICT
+        );
     }
 
     @Test
@@ -398,6 +533,35 @@ class TriggerOrderServiceExitOrderTest {
         Account account = org.mockito.Mockito.mock(Account.class);
         when(account.getId()).thenReturn(100L);
         when(accountRepository.findByAccountNumber("DEMO-ACCOUNT-001")).thenReturn(Optional.of(account));
+    }
+
+    private TriggerOrder standaloneExitOrder() {
+        TriggerOrder order = new TriggerOrder();
+        ReflectionTestUtils.setField(order, "id", 10L);
+        order.setAccountId(100L);
+        order.setPurpose(TriggerOrderPurpose.EXIT);
+        order.setExitType(ExitOrderType.TP);
+        order.setTargetPositionId(1L);
+        order.setCurrencyPair("USD/JPY");
+        order.setSide(OrderSide.SELL);
+        order.setOrderType(OrderType.LIMIT);
+        order.setQuantity(new BigDecimal("1000"));
+        order.setTriggerPrice(new BigDecimal("156.000"));
+        order.setStatus(TriggerOrderStatus.PENDING);
+        return order;
+    }
+
+    private PositionExitOrderAmendRequest exitAmendRequest(String triggerPrice) {
+        PositionExitOrderAmendRequest request = new PositionExitOrderAmendRequest();
+        request.setTriggerPrice(new BigDecimal(triggerPrice));
+        return request;
+    }
+
+    private void assertResponseStatus(Runnable action, HttpStatus status) {
+        assertThatThrownBy(action::run)
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+                .isEqualTo(status);
     }
 
     private void mockOpenPosition(PositionSide side) {

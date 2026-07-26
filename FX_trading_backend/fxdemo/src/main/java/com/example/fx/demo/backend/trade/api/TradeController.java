@@ -6,6 +6,7 @@ import com.example.fx.demo.backend.order.dto.IfdOrderResponse;
 import com.example.fx.demo.backend.order.dto.IfoOrderRequest;
 import com.example.fx.demo.backend.order.dto.IfoOrderResponse;
 import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
+import com.example.fx.demo.backend.order.dto.PendingOrderAmendRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
 import com.example.fx.demo.backend.trade.dto.MarketOrderRequest;
 import com.example.fx.demo.backend.trade.dto.OrderResultResponse;
@@ -14,6 +15,7 @@ import com.example.fx.demo.backend.trade.dto.TradeSummaryResponse;
 import com.example.fx.demo.backend.trade.service.TradeExecutionService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -57,6 +59,14 @@ public class TradeController {
     @PostMapping("/orders/pending/{id}/cancel")
     public PendingOrderResponse cancelPendingOrder(@PathVariable Long id) {
         return triggerOrderService.cancelPendingOrder(id);
+    }
+
+    @PatchMapping("/orders/pending/{id}")
+    public PendingOrderResponse amendPendingOrder(
+            @PathVariable Long id,
+            @RequestBody PendingOrderAmendRequest request
+    ) {
+        return triggerOrderService.amendPendingOrder(id, request);
     }
 
     @GetMapping("/orders/pending")

@@ -49,13 +49,13 @@ TP/SL 数量変更、OCO、IFD/IFO、訂正履歴の永続化・表示は重大�
 | `FX_trading_backend/fxdemo/src/main/java/com/example/fx/demo/backend/trade/api/TradeController.java` | 通常予約注文の PATCH エンドポイント追加 | 既存の pending 注文 API の配置先 |
 | `FX_trading_backend/fxdemo/src/main/java/com/example/fx/demo/backend/position/api/PositionController.java` | 単独 TP/SL の PATCH エンドポイント追加 | 既存の建玉・決済注文 API の配置先 |
 | `FX_trading_backend/fxdemo/src/main/java/com/example/fx/demo/backend/order/service/TriggerOrderService.java` | ロック内訂正、対象関係・状態検証、正規化、方向検証、保存処理を追加 | 注文の生成・取消・監視・約定を集約している既存サービス |
+| `FX_trading_backend/fxdemo/src/main/java/com/example/fx/demo/backend/position/service/PositionService.java` | 建玉レスポンス内の決済注文へ `parentOrderId` をマッピング | バインド済み IFD/IFO 子を UI で識別するため |
+| `FX_trading_backend/fxdemo/src/main/java/com/example/fx/demo/backend/position/dto/PositionExitOrderResponse.java` | 加算的な `parentOrderId` フィールドを追加 | 単独 TP/SL と IFD/IFO 子の編集可否を区別するため |
 | `FX_trading_backend/fxdemo/src/main/java/com/example/fx/demo/backend/common/exception/ApiExceptionHandler.java` | JSON 数値形式不正を既存 `ApiErrorResponse(message)` の 400 応答へ統一 | 現在は `ResponseStatusException` のみ共通形式化 |
 | `FX_trading_backend/fxdemo/src/test/java/com/example/fx/demo/backend/order/TriggerOrderServiceExitOrderTest.java` | 単独 EXIT 訂正と既存全量決済・OCO/IFD/IFO拒否の回帰観点を追加 | 既存の TP/SL、OCO、IFD/IFO のサービス単体テスト |
 | `FX_trading_front/fx-demo-front/lib/marketRateTicks.ts` | 訂正リクエスト型と PATCH API 関数を追加 | API 型・通信処理の既存集約先 |
 | `FX_trading_front/fx-demo-front/app/components/MarketMonitorDashboard.tsx` | 選択・入力・送信中・エラー状態、成功後の再取得処理を追加 | Trading データと注文操作の状態管理先 |
 | `FX_trading_front/fx-demo-front/app/components/MarketMonitorScreens.tsx` | Pending orders 選択と詳細訂正フォームへの props 接続 | 3画面レイアウトの構成先 |
-| `FX_trading_front/fx-demo-front/app/globals.css` | 既存トークンによる選択行・フォーム・エラー表示の最小スタイル追加 | UI スタイルの既存集約先 |
-
 `TriggerOrder.java`、`TriggerOrderRepository.java`、`application.properties` / `application.yml` は変更しない。既存フィールドと `JpaRepository.save` で実現でき、新規設定も不要なためである。
 
 ## 新規作成ファイル一覧
@@ -101,7 +101,8 @@ TP/SL 数量変更、OCO、IFD/IFO、訂正履歴の永続化・表示は重大�
   - 成功後に pending orders、positions、order history を再取得する。
 - `MarketMonitorScreens` / `PendingOrdersPanel`
   - PENDING の単独 ENTRY の選択 UI と詳細フォームを表示する。
-  - 建玉詳細では単独 TP/SL だけに Edit 導線を表示し、OCO には表示しない。
+  - 一覧内の `parentOrderId` から IFD/IFO 親を識別し、単独 ENTRY だけを選択可能にする。
+  - 建玉詳細では `PositionExitOrderResponse.parentOrderId` も確認し、単独 TP/SL だけに Edit 導線を表示する。OCO および IFD/IFO 子には表示しない。
 
 ## メソッド・関数構成
 
@@ -201,7 +202,7 @@ TP/SL 数量変更、OCO、IFD/IFO、訂正履歴の永続化・表示は重大�
   - 数量は受け付けない。
 - 対象
   - 注文状態は `PENDING` のみ。
-  - 通常 API は単独 ENTRY のみ。`targetPositionId`、`parentOrderId`、`ocoGroupId` は null であること。
+  - 通常 API は単独 ENTRY のみ。`targetPositionId`、`parentOrderId`、`ocoGroupId` は null であり、当該 ID を `parentOrderId` として参照する子注文が存在しないこと。
   - EXIT API は `purpose=EXIT`、path の position ID と `targetPositionId` が一致し、`parentOrderId` / `ocoGroupId` が null であること。
   - 対象建玉は存在し、デモ口座に属し、`OPEN` であること。
 
@@ -233,7 +234,7 @@ UI は送信中に対象フォームとボタンを無効化し、二重送信�
 ## 後方互換性
 
 - 既存 API の URL、HTTP メソッド、リクエスト、レスポンスは変更せず、PATCH を追加するだけとする。
-- 既存レスポンス DTO にフィールドを追加しないため、既存クライアントへの影響はない。
+- `PositionExitOrderResponse` には IFD/IFO 子を UI で識別する `parentOrderId` を末尾へ追加する。JSON の加算的変更で既存フィールドの意味・名称は変えず、既存クライアントとの互換性を維持する。
 - DB カラム・状態 enum・設定値を追加しない。`ddl-auto=update` によるスキーマ変更も発生させない。
 - `PENDING` / `WAITING` の既存取得・取消挙動は変更しない。訂正だけをより狭い `PENDING` に限定する。
 - 古い画面からの上書き検出用 version は追加せず、PENDING のまま複数クライアントが順次訂正した場合は後勝ちとする。現行 DTO は `updatedAt` / version を公開せず、既存取引処理も `AccountTradeLockService` による直列化を採るため、Issue #2 だけに楽観ロックと API 互換性変更を導入しない。
@@ -259,7 +260,7 @@ UI は送信中に対象フォームとボタンを無効化し、二重送信�
 - 項目なし、明示 null、0、負数、丸め後 0、precision 超過を 400 とし、`save` されない。
 - 存在しない ID は 404。
 - WAITING、TRIGGERED、CANCELLED、REJECTED、EXPIRED は 409。
-- EXIT、OCO グループ所属、IFD/IFO の親または子を通常 API で拒否する。
+- EXIT、OCO グループ所属、子注文から参照される IFD/IFO 親、IFD/IFO 子を通常 API で拒否する。
 - ロック取得前は PENDING でも、ロック内再取得時に TRIGGERED なら拒否することを、制御可能な lock stub または順序検証で確認する。
 - 成功応答に ID、関連情報、訂正後 quantity / triggerPrice が維持・反映される。
 
@@ -268,7 +269,7 @@ UI は送信中に対象フォームとボタンを無効化し、二重送信�
 - LONG/SHORT × TP/SL の有効価格訂正。
 - 現在の Bid/Ask に対する境界不正。
 - position ID 不一致、他口座、CLOSED 建玉、レートなし。
-- OCO レッグ、未バインド IFD/IFO 子、WAITING を拒否。
+- OCO レッグ、未バインドおよびバインド済み IFD/IFO 子、WAITING を拒否。
 - quantity や関連属性が変わらない。
 - 訂正後価格を次回 `evaluatePendingOrder` が利用し、既存の全量決済を呼ぶ。
 - 既存 OCO 相互取消、IFD/IFO バインドのテストが継続成功する。

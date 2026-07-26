@@ -531,7 +531,8 @@ public class PositionService {
                 order.getStatus().name(),
                 order.getOcoGroupId(),
                 order.getCreatedAt(),
-                order.getTriggeredAt()
+                order.getTriggeredAt(),
+                order.getParentOrderId()
         );
     }
 

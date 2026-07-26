@@ -5,6 +5,7 @@ import com.example.fx.demo.backend.order.service.TriggerOrderService;
 import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionExitOrderAmendRequest;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderResponse;
@@ -15,6 +16,7 @@ import com.example.fx.demo.backend.position.service.SwapTransferService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -82,6 +84,15 @@ public class PositionController {
             @PathVariable Long exitId
     ) {
         return triggerOrderService.cancelExitOrder(id, exitId);
+    }
+
+    @PatchMapping("/positions/{id}/exit-orders/{exitId}")
+    public PositionExitOrderResponse amendExitOrder(
+            @PathVariable Long id,
+            @PathVariable Long exitId,
+            @RequestBody PositionExitOrderAmendRequest request
+    ) {
+        return triggerOrderService.amendExitOrder(id, exitId, request);
     }
 
     @PostMapping("/positions/{id}/oco-orders")

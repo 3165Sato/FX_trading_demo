@@ -17,6 +17,7 @@ import com.example.fx.demo.backend.market.pair.CurrencyPairRepository;
 import com.example.fx.demo.backend.market.rate.MarketRate;
 import com.example.fx.demo.backend.market.rate.MarketRateRepository;
 import com.example.fx.demo.backend.order.dto.PendingOrderRequest;
+import com.example.fx.demo.backend.order.dto.PendingOrderAmendRequest;
 import com.example.fx.demo.backend.order.dto.PendingOrderResponse;
 import com.example.fx.demo.backend.order.dto.IfdOrderRequest;
 import com.example.fx.demo.backend.order.dto.IfdOrderResponse;
@@ -26,6 +27,7 @@ import com.example.fx.demo.backend.position.domain.Position;
 import com.example.fx.demo.backend.position.repository.PositionRepository;
 import com.example.fx.demo.backend.position.service.PositionService;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderRequest;
+import com.example.fx.demo.backend.position.dto.PositionExitOrderAmendRequest;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderResponse;
@@ -148,6 +150,14 @@ public class TriggerOrderService {
     }
 
     @Transactional
+    public PendingOrderResponse amendPendingOrder(Long id, PendingOrderAmendRequest request) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> amendPendingOrderLocked(id, request)
+        );
+    }
+
+    @Transactional
     public PositionExitOrderResponse placeExitOrder(Long positionId, PositionExitOrderRequest request) {
         return accountTradeLockService.withAccountLock(
                 DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
@@ -160,6 +170,18 @@ public class TriggerOrderService {
         return accountTradeLockService.withAccountLock(
                 DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
                 () -> cancelExitOrderLocked(positionId, exitOrderId)
+        );
+    }
+
+    @Transactional
+    public PositionExitOrderResponse amendExitOrder(
+            Long positionId,
+            Long exitOrderId,
+            PositionExitOrderAmendRequest request
+    ) {
+        return accountTradeLockService.withAccountLock(
+                DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
+                () -> amendExitOrderLocked(positionId, exitOrderId, request)
         );
     }
 
@@ -177,6 +199,162 @@ public class TriggerOrderService {
                 DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER,
                 () -> cancelOcoOrderLocked(positionId, groupId)
         );
+    }
+
+    private PendingOrderResponse amendPendingOrderLocked(Long id, PendingOrderAmendRequest request) {
+        if (request == null || (!request.isQuantitySpecified() && !request.isTriggerPriceSpecified())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "注文価格または数量の少なくとも一方を指定してください。"
+            );
+        }
+        if ((request.isQuantitySpecified() && request.getQuantity() == null)
+                || (request.isTriggerPriceSpecified() && request.getTriggerPrice() == null)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "注文価格と数量にnullは指定できません。");
+        }
+
+        Account account = findDefaultAccount();
+        TriggerOrder order = triggerOrderRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Pending order not found: " + id));
+        validateAmendablePendingEntry(order, account);
+
+        CurrencyPair currencyPair = findEnabledCurrencyPair(order.getCurrencyPair());
+        MarketRate marketRate = findLatestMarketRate(currencyPair);
+        BigDecimal quantity = request.isQuantitySpecified()
+                ? normalizePositive(request.getQuantity(), currencyPair.getQuantityScale(), "数量")
+                : order.getQuantity();
+        BigDecimal triggerPrice = request.isTriggerPriceSpecified()
+                ? normalizePositive(request.getTriggerPrice(), currencyPair.getPriceScale(), "注文価格")
+                : order.getTriggerPrice();
+        validateTriggerDirection(order.getSide(), order.getOrderType(), triggerPrice, marketRate);
+
+        order.setQuantity(quantity);
+        order.setTriggerPrice(triggerPrice);
+        return toResponse(triggerOrderRepository.save(order));
+    }
+
+    private PositionExitOrderResponse amendExitOrderLocked(
+            Long positionId,
+            Long exitOrderId,
+            PositionExitOrderAmendRequest request
+    ) {
+        if (request == null || !request.isTriggerPriceSpecified() || request.getTriggerPrice() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "決済注文価格を指定してください。");
+        }
+        if (request.isQuantitySpecified()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "TP/SLの数量訂正には対応していません。");
+        }
+
+        Account account = findDefaultAccount();
+        TriggerOrder order = triggerOrderRepository.findById(exitOrderId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "決済注文が見つかりません: " + exitOrderId
+                ));
+        Position position = positionRepository.findById(positionId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "対象建玉が見つかりません: " + positionId
+                ));
+        validateAmendableStandaloneExit(order, positionId, position, account);
+
+        CurrencyPair currencyPair = findEnabledCurrencyPair(position.getCurrencyPair());
+        MarketRate marketRate = findLatestMarketRate(currencyPair);
+        BigDecimal triggerPrice = normalizePositive(
+                request.getTriggerPrice(),
+                currencyPair.getPriceScale(),
+                "決済注文価格"
+        );
+        validateExitDirection(position, order.getExitType(), triggerPrice, marketRate);
+
+        order.setTriggerPrice(triggerPrice);
+        return toExitOrderResponse(triggerOrderRepository.save(order));
+    }
+
+    private void validateAmendablePendingEntry(TriggerOrder order, Account account) {
+        if (!Objects.equals(account.getId(), order.getAccountId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Pending order not found: " + order.getId());
+        }
+        if (order.getStatus() != TriggerOrderStatus.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PENDING状態の注文のみ訂正できます。");
+        }
+        if (!isEntryOrder(order)
+                || order.getTargetPositionId() != null
+                || order.getParentOrderId() != null
+                || (order.getOcoGroupId() != null && !order.getOcoGroupId().isBlank())
+                || !triggerOrderRepository.findByParentOrderIdOrderByCreatedAtAsc(order.getId()).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "複合注文または決済注文はこのAPIでは訂正できません。");
+        }
+        if (order.getSide() == null || order.getOrderType() == null || order.getOrderType() == OrderType.MARKET) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "この注文は訂正できません。");
+        }
+    }
+
+    private void validateAmendableStandaloneExit(
+            TriggerOrder order,
+            Long positionId,
+            Position position,
+            Account account
+    ) {
+        if (!Objects.equals(account.getId(), position.getAccountId())
+                || !Objects.equals(account.getId(), order.getAccountId())
+                || order.getPurpose() != TriggerOrderPurpose.EXIT
+                || !Objects.equals(positionId, order.getTargetPositionId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "決済注文が見つかりません: " + order.getId());
+        }
+        if (order.getStatus() != TriggerOrderStatus.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PENDING状態の決済注文のみ訂正できます。");
+        }
+        if (position.getStatus() != PositionStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "OPEN状態の建玉の決済注文のみ訂正できます。");
+        }
+        if (order.getParentOrderId() != null
+                || (order.getOcoGroupId() != null && !order.getOcoGroupId().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "OCOまたはIFD/IFOの決済注文訂正には対応していません。");
+        }
+        if (order.getExitType() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "この決済注文は訂正できません。");
+        }
+    }
+
+    private Account findDefaultAccount() {
+        return accountRepository.findByAccountNumber(DemoTradingAccountInitializer.DEFAULT_ACCOUNT_NUMBER)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Default demo account is not ready"));
+    }
+
+    private CurrencyPair findEnabledCurrencyPair(String symbol) {
+        return currencyPairRepository.findBySymbol(symbol)
+                .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Currency pair not found: " + symbol
+                ));
+    }
+
+    private MarketRate findLatestMarketRate(CurrencyPair currencyPair) {
+        return marketRateRepository.findByCurrencyPair(currencyPair)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Latest market rate is not available: " + currencyPair.getSymbol()
+                ));
+    }
+
+    private BigDecimal normalizePositive(BigDecimal value, int scale, String label) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + "は0より大きい値を指定してください。");
+        }
+        long integerDigits = (long) value.precision() - value.scale();
+        if (value.precision() > 19 || integerDigits > 19 || value.scale() > scale + 19L) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + "の桁数が大きすぎます。");
+        }
+        BigDecimal normalized = value.setScale(scale, RoundingMode.HALF_UP);
+        if (normalized.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + "は丸め後も0より大きい値を指定してください。");
+        }
+        if (normalized.precision() > 19) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + "の桁数が大きすぎます。");
+        }
+        return normalized;
     }
 
     private PositionExitOrderResponse placeExitOrderLocked(Long positionId, PositionExitOrderRequest request) {
@@ -954,7 +1132,8 @@ public class TriggerOrderService {
                 order.getStatus().name(),
                 order.getOcoGroupId(),
                 order.getCreatedAt(),
-                order.getTriggeredAt()
+                order.getTriggeredAt(),
+                order.getParentOrderId()
         );
     }
 
