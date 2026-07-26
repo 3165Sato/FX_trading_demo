@@ -276,11 +276,14 @@ export function MonitorScreen({
 export function TradingScreen({
   accountSummary,
   activePair,
+  amendingExitOrderId,
+  amendingPendingOrderId,
   cancelingExitOrderId,
   cancelingOcoGroupId,
   cancelingPendingOrderId,
   closingPositionId,
   exitOrderDrafts,
+  exitOrderAmendment,
   ifdExitPrice,
   ifdExitType,
   ifoStopLossPrice,
@@ -292,6 +295,7 @@ export function TradingScreen({
   orderType,
   orders,
   pendingOrders,
+  pendingOrderAmendment,
   positions,
   pnlSummary,
   rates,
@@ -310,8 +314,11 @@ export function TradingScreen({
   onCancelExitOrder,
   onCancelOcoOrder,
   onCancelPendingOrder,
+  onCloseExitOrderAmendment,
+  onClosePendingOrderAmendment,
   onClosePosition,
   onExitOrderDraftChange,
+  onExitOrderAmendmentChange,
   onIfdExitPriceChange,
   onIfdExitTypeChange,
   onIfoStopLossPriceChange,
@@ -322,22 +329,30 @@ export function TradingScreen({
   onOrderPanelModeChange,
   onSelectPair,
   onSelectPosition,
+  onSelectExitOrderForAmendment,
+  onSelectPendingOrderForAmendment,
   onSubmitOrder,
   onSubmitExitOrder,
+  onSubmitExitOrderAmendment,
   onSubmitIfdOrder,
   onSubmitIfoOrder,
   onSubmitOcoOrder,
+  onSubmitPendingOrderAmendment,
+  onPendingOrderAmendmentChange,
   onTransferAllSwaps,
   onTransferPositionSwap,
   onTriggerPriceChange,
 }: {
   accountSummary: AccountSummary | null;
   activePair: string;
+  amendingExitOrderId: number | null;
+  amendingPendingOrderId: number | null;
   cancelingExitOrderId: number | null;
   cancelingOcoGroupId: string | null;
   cancelingPendingOrderId: number | null;
   closingPositionId: number | null;
   exitOrderDrafts: Record<number, Partial<Record<ExitOrderType, string>>>;
+  exitOrderAmendment: { positionId: number; orderId: number; triggerPrice: string } | null;
   ifdExitPrice: string;
   ifdExitType: ExitOrderType;
   ifoStopLossPrice: string;
@@ -349,6 +364,7 @@ export function TradingScreen({
   orderType: OrderType;
   orders: OrderSummary[];
   pendingOrders: PendingOrder[];
+  pendingOrderAmendment: { id: number; quantity: string; triggerPrice: string } | null;
   positions: PositionSummary[];
   pnlSummary: PnlSummary | null;
   rates: MarketRate[];
@@ -367,8 +383,11 @@ export function TradingScreen({
   onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelOcoOrder: (positionId: number, groupId: string) => void;
   onCancelPendingOrder: (id: number) => void;
+  onCloseExitOrderAmendment: () => void;
+  onClosePendingOrderAmendment: () => void;
   onClosePosition: (id: number) => void;
   onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onExitOrderAmendmentChange: (value: string) => void;
   onIfdExitPriceChange: (price: string) => void;
   onIfdExitTypeChange: (type: ExitOrderType) => void;
   onIfoStopLossPriceChange: (price: string) => void;
@@ -379,11 +398,19 @@ export function TradingScreen({
   onOrderPanelModeChange: (mode: OrderPanelMode) => void;
   onSelectPair: (currencyPair: string) => void;
   onSelectPosition: (positionId: number) => void;
+  onSelectExitOrderForAmendment: (
+    positionId: number,
+    order: PositionSummary["exitOrders"][number],
+  ) => void;
+  onSelectPendingOrderForAmendment: (order: PendingOrder) => void;
   onSubmitOrder: (side: OrderSide) => void;
   onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
+  onSubmitExitOrderAmendment: () => void;
   onSubmitIfdOrder: (side: OrderSide) => void;
   onSubmitIfoOrder: (side: OrderSide) => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
+  onSubmitPendingOrderAmendment: () => void;
+  onPendingOrderAmendmentChange: (field: "quantity" | "triggerPrice", value: string) => void;
   onTransferAllSwaps: () => void;
   onTransferPositionSwap: (position: PositionSummary) => void;
   onTriggerPriceChange: (triggerPrice: string) => void;
@@ -449,27 +476,39 @@ export function TradingScreen({
               onSelectPosition={onSelectPosition}
             />
             <PositionDetailPanel
+              amendingExitOrderId={amendingExitOrderId}
               cancelingExitOrderId={cancelingExitOrderId}
               cancelingOcoGroupId={cancelingOcoGroupId}
               closingPositionId={closingPositionId}
               drafts={selectedPosition ? exitOrderDrafts[selectedPosition.id] ?? {} : {}}
+              exitOrderAmendment={exitOrderAmendment}
               position={selectedPosition}
               submittingExitOrder={submittingExitOrder}
               submittingOcoPositionId={submittingOcoPositionId}
               transferringSwapPositionId={transferringSwapPositionId}
               onCancelExitOrder={onCancelExitOrder}
               onCancelOcoOrder={onCancelOcoOrder}
+              onCloseExitOrderAmendment={onCloseExitOrderAmendment}
               onClose={onClosePosition}
               onExitOrderDraftChange={onExitOrderDraftChange}
+              onExitOrderAmendmentChange={onExitOrderAmendmentChange}
+              onSelectExitOrderForAmendment={onSelectExitOrderForAmendment}
               onSubmitExitOrder={onSubmitExitOrder}
+              onSubmitExitOrderAmendment={onSubmitExitOrderAmendment}
               onSubmitOcoOrder={onSubmitOcoOrder}
               onTransferSwap={onTransferPositionSwap}
             />
           </div>
           <PendingOrdersPanel
+            amendingOrderId={amendingPendingOrderId}
             cancelingOrderId={cancelingPendingOrderId}
+            amendment={pendingOrderAmendment}
             orders={visiblePendingOrders}
             onCancel={onCancelPendingOrder}
+            onAmendmentChange={onPendingOrderAmendmentChange}
+            onCloseAmendment={onClosePendingOrderAmendment}
+            onSelectAmendment={onSelectPendingOrderForAmendment}
+            onSubmitAmendment={onSubmitPendingOrderAmendment}
           />
         </div>
       </div>

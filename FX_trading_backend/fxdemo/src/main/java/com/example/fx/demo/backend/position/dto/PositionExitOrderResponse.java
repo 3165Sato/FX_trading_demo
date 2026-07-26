@@ -10,6 +10,7 @@ public record PositionExitOrderResponse(
         String status,
         String ocoGroupId,
         LocalDateTime createdAt,
-        LocalDateTime triggeredAt
+        LocalDateTime triggeredAt,
+        Long parentOrderId
 ) {
 }

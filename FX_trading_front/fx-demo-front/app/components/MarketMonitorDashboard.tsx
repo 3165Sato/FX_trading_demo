@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  amendPendingOrder,
+  amendPositionExitOrder,
   cancelPositionExitOrder,
   cancelPositionOcoOrder,
   cancelPendingOrder,
@@ -148,12 +150,24 @@ export function MarketMonitorDashboard() {
   const [submittingIfdSide, setSubmittingIfdSide] = useState<OrderSide | null>(null);
   const [submittingIfoSide, setSubmittingIfoSide] = useState<OrderSide | null>(null);
   const [cancelingPendingOrderId, setCancelingPendingOrderId] = useState<number | null>(null);
+  const [pendingOrderAmendment, setPendingOrderAmendment] = useState<{
+    id: number;
+    quantity: string;
+    triggerPrice: string;
+  } | null>(null);
+  const [amendingPendingOrderId, setAmendingPendingOrderId] = useState<number | null>(null);
   const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
   const [transferringSwapPositionId, setTransferringSwapPositionId] = useState<number | null>(null);
   const [transferringAllSwaps, setTransferringAllSwaps] = useState(false);
   const [exitOrderDrafts, setExitOrderDrafts] = useState<Record<number, Partial<Record<ExitOrderType, string>>>>({});
   const [submittingExitOrder, setSubmittingExitOrder] = useState<{ positionId: number; type: ExitOrderType } | null>(null);
   const [cancelingExitOrderId, setCancelingExitOrderId] = useState<number | null>(null);
+  const [exitOrderAmendment, setExitOrderAmendment] = useState<{
+    positionId: number;
+    orderId: number;
+    triggerPrice: string;
+  } | null>(null);
+  const [amendingExitOrderId, setAmendingExitOrderId] = useState<number | null>(null);
   const [submittingOcoPositionId, setSubmittingOcoPositionId] = useState<number | null>(null);
   const [cancelingOcoGroupId, setCancelingOcoGroupId] = useState<string | null>(null);
   const [newsSubmittingDirection, setNewsSubmittingDirection] = useState<NewsDirection | null>(null);
@@ -788,6 +802,55 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const selectPendingOrderForAmendment = (order: PendingOrder) => {
+    const hasChildren = pendingOrders.some((candidate) => candidate.parentOrderId === order.id);
+    if (order.purpose === "EXIT" || order.parentOrderId || order.ocoGroupId || hasChildren) {
+      return;
+    }
+    setPendingOrderAmendment({
+      id: order.id,
+      quantity: String(order.quantity),
+      triggerPrice: String(order.triggerPrice),
+    });
+    setOrderError(null);
+  };
+
+  const updatePendingOrderAmendment = (field: "quantity" | "triggerPrice", value: string) => {
+    setPendingOrderAmendment((current) => current ? { ...current, [field]: value } : current);
+  };
+
+  const submitPendingOrderAmendment = async () => {
+    if (!pendingOrderAmendment) {
+      return;
+    }
+    const quantity = Number(pendingOrderAmendment.quantity);
+    const amendedTriggerPrice = Number(pendingOrderAmendment.triggerPrice);
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(amendedTriggerPrice) || amendedTriggerPrice <= 0) {
+      setOrderError("Trigger price and quantity must be greater than zero.");
+      return;
+    }
+    setAmendingPendingOrderId(pendingOrderAmendment.id);
+    try {
+      const amended = await amendPendingOrder(pendingOrderAmendment.id, {
+        quantity,
+        triggerPrice: amendedTriggerPrice,
+      });
+      setPendingOrders((current) => current.map((order) => order.id === amended.id ? amended : order));
+      setPendingOrderAmendment({
+        id: amended.id,
+        quantity: String(amended.quantity),
+        triggerPrice: String(amended.triggerPrice),
+      });
+      setLastOrderMessage(`Order #${amended.id} amended.`);
+      setOrderError(null);
+      await Promise.all([loadPendingOrders(), loadPendingOrderHistory()]);
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setAmendingPendingOrderId(null);
+    }
+  };
+
   const closeSelectedPosition = async (id: number) => {
     setClosingPositionId(id);
     try {
@@ -902,6 +965,48 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const selectExitOrderForAmendment = (
+    positionId: number,
+    order: PositionSummary["exitOrders"][number],
+  ) => {
+    if (order.ocoGroupId || order.status !== "PENDING") {
+      return;
+    }
+    setExitOrderAmendment({
+      positionId,
+      orderId: order.id,
+      triggerPrice: String(order.triggerPrice),
+    });
+    setOrderError(null);
+  };
+
+  const submitExitOrderAmendment = async () => {
+    if (!exitOrderAmendment) {
+      return;
+    }
+    const amendedTriggerPrice = Number(exitOrderAmendment.triggerPrice);
+    if (!Number.isFinite(amendedTriggerPrice) || amendedTriggerPrice <= 0) {
+      setOrderError("Exit order price must be greater than zero.");
+      return;
+    }
+    setAmendingExitOrderId(exitOrderAmendment.orderId);
+    try {
+      await amendPositionExitOrder(
+        exitOrderAmendment.positionId,
+        exitOrderAmendment.orderId,
+        amendedTriggerPrice,
+      );
+      setLastOrderMessage(`Exit order #${exitOrderAmendment.orderId} amended.`);
+      setOrderError(null);
+      await Promise.all([loadPositions(), loadPendingOrders(), loadPendingOrderHistory()]);
+      setExitOrderAmendment(null);
+    } catch (error) {
+      setOrderError(getErrorMessage(error));
+    } finally {
+      setAmendingExitOrderId(null);
+    }
+  };
+
   const submitPositionOcoOrder = async (position: PositionSummary) => {
     const tpPrice = Number(exitOrderDrafts[position.id]?.TP);
     const slPrice = Number(exitOrderDrafts[position.id]?.SL);
@@ -1002,6 +1107,10 @@ export function MarketMonitorDashboard() {
             cancelingExitOrderId={cancelingExitOrderId}
             cancelingOcoGroupId={cancelingOcoGroupId}
             cancelingPendingOrderId={cancelingPendingOrderId}
+            pendingOrderAmendment={pendingOrderAmendment}
+            amendingPendingOrderId={amendingPendingOrderId}
+            exitOrderAmendment={exitOrderAmendment}
+            amendingExitOrderId={amendingExitOrderId}
             exitOrderDrafts={exitOrderDrafts}
             ifdExitPrice={ifdExitPrice}
             ifdExitType={ifdExitType}
@@ -1032,6 +1141,16 @@ export function MarketMonitorDashboard() {
             onCancelPendingOrder={cancelSelectedPendingOrder}
             onCancelExitOrder={cancelSelectedExitOrder}
             onCancelOcoOrder={cancelSelectedOcoOrder}
+            onSelectPendingOrderForAmendment={selectPendingOrderForAmendment}
+            onPendingOrderAmendmentChange={updatePendingOrderAmendment}
+            onSubmitPendingOrderAmendment={submitPendingOrderAmendment}
+            onClosePendingOrderAmendment={() => setPendingOrderAmendment(null)}
+            onSelectExitOrderForAmendment={selectExitOrderForAmendment}
+            onExitOrderAmendmentChange={(value) =>
+              setExitOrderAmendment((current) => current ? { ...current, triggerPrice: value } : current)
+            }
+            onSubmitExitOrderAmendment={submitExitOrderAmendment}
+            onCloseExitOrderAmendment={() => setExitOrderAmendment(null)}
             onClosePosition={closeSelectedPosition}
             onExitOrderDraftChange={updateExitOrderDraft}
             onIfdExitPriceChange={setIfdExitPrice}
@@ -1969,21 +2088,39 @@ function OrderRow({ order }: { order: PendingOrder }) {
 }
 
 export function PendingOrdersPanel({
+  amendment,
+  amendingOrderId,
   cancelingOrderId,
   orders,
+  onAmendmentChange,
   onCancel,
+  onCloseAmendment,
+  onSelectAmendment,
+  onSubmitAmendment,
 }: {
+  amendment: { id: number; quantity: string; triggerPrice: string } | null;
+  amendingOrderId: number | null;
   cancelingOrderId: number | null;
   orders: PendingOrder[];
+  onAmendmentChange: (field: "quantity" | "triggerPrice", value: string) => void;
   onCancel: (id: number) => void;
+  onCloseAmendment: () => void;
+  onSelectAmendment: (order: PendingOrder) => void;
+  onSubmitAmendment: () => void;
 }) {
+  const compositeParentIds = new Set(
+    orders
+      .map((order) => order.parentOrderId)
+      .filter((parentOrderId): parentOrderId is number => parentOrderId !== null && parentOrderId !== undefined),
+  );
   return (
     <section className="border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Pending orders" meta={`${orders.length} waiting`} />
-      <div className="grid grid-cols-[76px_62px_62px_1fr_72px] border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-[76px_58px_52px_1fr_1fr_66px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>Pair</span>
         <span>Type</span>
         <span>Side</span>
+        <span className="text-right">Units</span>
         <span className="text-right">Trigger</span>
         <span className="text-right">Action</span>
       </div>
@@ -1993,36 +2130,97 @@ export function PendingOrdersPanel({
         ) : (
           orders.map((order) => (
             <PendingOrderRow
+              amendable={!compositeParentIds.has(order.id)}
               key={order.id}
               canceling={cancelingOrderId === order.id}
+              selected={amendment?.id === order.id}
               order={order}
               onCancel={onCancel}
+              onSelect={onSelectAmendment}
             />
           ))
         )}
       </div>
+      {amendment && (
+        <div className="grid gap-2 border-t border-[#262d38] bg-[#0d1117] p-3 sm:grid-cols-[1fr_1fr_auto_auto]">
+          <label className="grid gap-1 text-[10px] uppercase text-[#768390]">
+            Units
+            <input
+              aria-label={`Quantity for pending order ${amendment.id}`}
+              inputMode="decimal"
+              value={amendment.quantity}
+              onChange={(event) => onAmendmentChange("quantity", event.target.value)}
+              className="border border-[#262d38] bg-[#161b22] px-2 py-1.5 text-right font-mono text-xs text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+            />
+          </label>
+          <label className="grid gap-1 text-[10px] uppercase text-[#768390]">
+            Trigger
+            <input
+              aria-label={`Trigger price for pending order ${amendment.id}`}
+              inputMode="decimal"
+              value={amendment.triggerPrice}
+              onChange={(event) => onAmendmentChange("triggerPrice", event.target.value)}
+              className="border border-[#262d38] bg-[#161b22] px-2 py-1.5 text-right font-mono text-xs text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={amendingOrderId === amendment.id}
+            onClick={onSubmitAmendment}
+            className="self-end border border-[#58a6ff]/60 px-3 py-1.5 font-mono text-[10px] uppercase text-[#58a6ff] hover:bg-[#58a6ff]/10 disabled:opacity-50"
+          >
+            {amendingOrderId === amendment.id ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            disabled={amendingOrderId === amendment.id}
+            onClick={onCloseAmendment}
+            className="self-end border border-[#262d38] px-3 py-1.5 font-mono text-[10px] uppercase text-[#768390] hover:bg-[#21272f] disabled:opacity-50"
+          >
+            Close
+          </button>
+        </div>
+      )}
     </section>
   );
 }
 
 function PendingOrderRow({
+  amendable: notCompositeParent,
   canceling,
   order,
+  selected,
   onCancel,
+  onSelect,
 }: {
+  amendable: boolean;
   canceling: boolean;
   order: PendingOrder;
+  selected: boolean;
   onCancel: (id: number) => void;
+  onSelect: (order: PendingOrder) => void;
 }) {
   const sideClass = order.side === "BUY" ? "text-[#4493f8]" : "text-[#f85149]";
   const typeLabel = order.exitType ? `${order.exitType}` : order.orderType;
   const pairLabel = order.parentOrderId ? `└ #${order.parentOrderId}` : order.currencyPair;
+  const amendable = notCompositeParent
+    && order.purpose !== "EXIT"
+    && !order.parentOrderId
+    && !order.ocoGroupId;
   return (
-    <div className="grid grid-cols-[76px_62px_62px_1fr_72px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0">
-      <span className={order.parentOrderId ? "truncate text-[#768390]" : "truncate text-[#e6edf3]"}>{pairLabel}</span>
-      <span className="text-[#d29922]">{order.ocoGroupId ? `${typeLabel}/OCO` : typeLabel}</span>
-      <span className={sideClass}>{order.side}</span>
-      <span className="text-right text-[#adbac7]">{formatPrice(order.triggerPrice, order.currencyPair)}</span>
+    <div className={`grid grid-cols-[76px_58px_52px_1fr_1fr_66px] items-center gap-2 border-b border-[#202832] px-3 py-3 font-mono text-[11px] last:border-b-0 ${selected ? "bg-[#58a6ff]/10" : ""}`}>
+      <button
+        type="button"
+        disabled={!amendable}
+        onClick={() => onSelect(order)}
+        className="contents text-left disabled:cursor-default"
+      >
+        <span className={order.parentOrderId ? "truncate text-[#768390]" : "truncate text-[#e6edf3]"}>{pairLabel}</span>
+        <span className="text-[#d29922]">{order.ocoGroupId ? `${typeLabel}/OCO` : typeLabel}</span>
+        <span className={sideClass}>{order.side}</span>
+        <span className="text-right text-[#adbac7]">{formatQuantity(order.quantity)}</span>
+        <span className="text-right text-[#adbac7]">{formatPrice(order.triggerPrice, order.currencyPair)}</span>
+      </button>
       <button
         type="button"
         disabled={canceling}
@@ -2125,35 +2323,50 @@ function PositionRow({
 }
 
 export function PositionDetailPanel({
+  amendingExitOrderId,
   cancelingExitOrderId,
   cancelingOcoGroupId,
   closingPositionId,
   drafts,
+  exitOrderAmendment,
   position,
   submittingExitOrder,
   submittingOcoPositionId,
   transferringSwapPositionId,
   onCancelExitOrder,
   onCancelOcoOrder,
+  onCloseExitOrderAmendment,
   onClose,
   onExitOrderDraftChange,
+  onExitOrderAmendmentChange,
+  onSelectExitOrderForAmendment,
   onSubmitExitOrder,
+  onSubmitExitOrderAmendment,
   onSubmitOcoOrder,
   onTransferSwap,
 }: {
+  amendingExitOrderId: number | null;
   cancelingExitOrderId: number | null;
   cancelingOcoGroupId: string | null;
   closingPositionId: number | null;
   drafts: Partial<Record<ExitOrderType, string>>;
+  exitOrderAmendment: { positionId: number; orderId: number; triggerPrice: string } | null;
   position: PositionSummary | null;
   submittingExitOrder: { positionId: number; type: ExitOrderType } | null;
   submittingOcoPositionId: number | null;
   transferringSwapPositionId: number | null;
   onCancelExitOrder: (positionId: number, exitOrderId: number) => void;
   onCancelOcoOrder: (positionId: number, groupId: string) => void;
+  onCloseExitOrderAmendment: () => void;
   onClose: (id: number) => void;
   onExitOrderDraftChange: (positionId: number, type: ExitOrderType, value: string) => void;
+  onExitOrderAmendmentChange: (value: string) => void;
+  onSelectExitOrderForAmendment: (
+    positionId: number,
+    order: PositionSummary["exitOrders"][number],
+  ) => void;
   onSubmitExitOrder: (position: PositionSummary, type: ExitOrderType) => void;
+  onSubmitExitOrderAmendment: () => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
   onTransferSwap: (position: PositionSummary) => void;
 }) {
@@ -2204,11 +2417,19 @@ export function PositionDetailPanel({
         ) : (
           <div className="divide-y divide-[#202832] border border-[#262d38] bg-[#0d1117]">
             {activeExitOrders.map((order) => (
-              <div key={order.id} className="grid grid-cols-[34px_1fr_64px] items-center gap-2 px-3 py-2 font-mono text-[11px]">
+              <div key={order.id} className="grid grid-cols-[34px_1fr_48px_64px] items-center gap-2 px-3 py-2 font-mono text-[11px]">
                 <span className={order.type === "TP" ? "text-[#3fb950]" : "text-[#f85149]"}>{order.type ?? "--"}</span>
                 <span className="text-[#adbac7]">
                   {formatPrice(order.triggerPrice, position.currencyPair)} / {order.status}
                 </span>
+                <button
+                  type="button"
+                  disabled={order.ocoGroupId !== null || order.parentOrderId !== null || order.status !== "PENDING"}
+                  onClick={() => onSelectExitOrderForAmendment(position.id, order)}
+                  className="border border-[#58a6ff]/50 px-1.5 py-1 text-[9px] uppercase text-[#58a6ff] hover:bg-[#58a6ff]/10 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  Edit
+                </button>
                 <button
                   type="button"
                   disabled={cancelingExitOrderId === order.id || (order.ocoGroupId !== null && cancelingOcoGroupId === order.ocoGroupId)}
@@ -2223,6 +2444,33 @@ export function PositionDetailPanel({
                 </button>
               </div>
             ))}
+          </div>
+        )}
+        {exitOrderAmendment?.positionId === position.id && (
+          <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2 border border-[#262d38] bg-[#0d1117] p-2">
+            <input
+              aria-label={`Amended exit price for order ${exitOrderAmendment.orderId}`}
+              inputMode="decimal"
+              value={exitOrderAmendment.triggerPrice}
+              onChange={(event) => onExitOrderAmendmentChange(event.target.value)}
+              className="min-w-0 border border-[#262d38] bg-[#161b22] px-2 py-1.5 text-right font-mono text-xs text-[#e6edf3] outline-none focus:border-[#58a6ff]"
+            />
+            <button
+              type="button"
+              disabled={amendingExitOrderId === exitOrderAmendment.orderId}
+              onClick={onSubmitExitOrderAmendment}
+              className="border border-[#58a6ff]/50 px-2 py-1 text-[9px] uppercase text-[#58a6ff] hover:bg-[#58a6ff]/10 disabled:opacity-50"
+            >
+              {amendingExitOrderId === exitOrderAmendment.orderId ? "..." : "Save"}
+            </button>
+            <button
+              type="button"
+              disabled={amendingExitOrderId === exitOrderAmendment.orderId}
+              onClick={onCloseExitOrderAmendment}
+              className="border border-[#262d38] px-2 py-1 text-[9px] uppercase text-[#768390] hover:bg-[#21272f] disabled:opacity-50"
+            >
+              Close
+            </button>
           </div>
         )}
       </div>
