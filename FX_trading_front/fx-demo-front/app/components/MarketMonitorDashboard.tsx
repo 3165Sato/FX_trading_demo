@@ -30,6 +30,7 @@ import {
   placeIfoOrder,
   placePendingOrder,
   placeMarketOrder,
+  quickClosePositions,
   triggerNewsEvent,
   triggerSwapRollover,
   transferAllPositionSwaps,
@@ -52,6 +53,8 @@ import {
   type PendingOrderStatus,
   type PnlSummary,
   type PositionSummary,
+  type QuickCloseResult,
+  type QuickCloseScope,
   type SpreadStats,
   type TradeSummary,
 } from "../../lib/marketRateTicks";
@@ -104,6 +107,11 @@ export function MarketMonitorDashboard() {
   const [spreadStats, setSpreadStats] = useState<SpreadStats | undefined>();
   const [monitorSelectedPair, setMonitorSelectedPair] = useState(DEFAULT_PAIR);
   const [tradingSelectedPair, setTradingSelectedPair] = useState(DEFAULT_PAIR);
+  const [quickCloseScope, setQuickCloseScope] = useState<QuickCloseScope>("PAIR");
+  const [quickClosePair, setQuickClosePair] = useState(DEFAULT_PAIR);
+  const [quickCloseResult, setQuickCloseResult] = useState<QuickCloseResult | null>(null);
+  const [quickCloseError, setQuickCloseError] = useState<string | null>(null);
+  const [quickCloseSubmitting, setQuickCloseSubmitting] = useState(false);
   const [selectedPositionId, setSelectedPositionId] = useState<number | null>(null);
   const [orderType, setOrderType] = useState<OrderType>("MARKET");
   const [orderQuantity, setOrderQuantity] = useState("10000");
@@ -965,6 +973,31 @@ export function MarketMonitorDashboard() {
     }
   };
 
+  const submitQuickClose = async () => {
+    const targetPair = resolveQuickClosePair(quickClosePair, monitoredRates);
+    setQuickCloseSubmitting(true);
+    setQuickCloseResult(null);
+    setQuickCloseError(null);
+    try {
+      const result = await quickClosePositions({
+        scope: quickCloseScope,
+        ...(quickCloseScope === "PAIR" ? { currencyPair: targetPair } : {}),
+      });
+      setQuickCloseResult(result);
+    } catch (error) {
+      setQuickCloseError(getErrorMessage(error));
+    } finally {
+      await Promise.all([
+        loadPositions(),
+        loadOrders(),
+        loadTrades(),
+        loadPnlSummary(),
+        loadAccountSummary(),
+      ]);
+      setQuickCloseSubmitting(false);
+    }
+  };
+
   const selectExitOrderForAmendment = (
     positionId: number,
     order: PositionSummary["exitOrders"][number],
@@ -1123,6 +1156,11 @@ export function MarketMonitorDashboard() {
             orders={orders}
             pendingOrders={pendingOrders}
             positions={positions}
+            quickCloseError={quickCloseError}
+            quickClosePair={quickClosePair}
+            quickCloseResult={quickCloseResult}
+            quickCloseScope={quickCloseScope}
+            quickCloseSubmitting={quickCloseSubmitting}
             pnlSummary={pnlSummary}
             rates={monitoredRates}
             selectedPosition={selectedPosition}
@@ -1158,6 +1196,8 @@ export function MarketMonitorDashboard() {
             onIfoStopLossPriceChange={setIfoStopLossPrice}
             onIfoTakeProfitPriceChange={setIfoTakeProfitPrice}
             onQuantityChange={setOrderQuantity}
+            onQuickClosePairChange={setQuickClosePair}
+            onQuickCloseScopeChange={setQuickCloseScope}
             onOrderTypeChange={setOrderType}
             onOrderPanelModeChange={setOrderPanelMode}
             onSelectPair={selectTradingCurrencyPair}
@@ -1168,6 +1208,7 @@ export function MarketMonitorDashboard() {
             onSubmitIfdOrder={submitIfdOrder}
             onSubmitIfoOrder={submitIfoOrder}
             onSubmitOcoOrder={submitPositionOcoOrder}
+            onSubmitQuickClose={submitQuickClose}
             onTransferAllSwaps={transferAllSwaps}
             onTransferPositionSwap={transferSelectedPositionSwap}
             onTriggerPriceChange={setTriggerPrice}
@@ -1949,6 +1990,90 @@ export function AccountSummaryBand({
   );
 }
 
+export function QuickClosePanel({
+  error,
+  pair,
+  rates,
+  result,
+  scope,
+  submitting,
+  onPairChange,
+  onScopeChange,
+  onSubmit,
+}: {
+  error: string | null;
+  pair: string;
+  rates: MarketRate[];
+  result: QuickCloseResult | null;
+  scope: QuickCloseScope;
+  submitting: boolean;
+  onPairChange: (pair: string) => void;
+  onScopeChange: (scope: QuickCloseScope) => void;
+  onSubmit: () => void;
+}) {
+  const selectedPair = resolveQuickClosePair(pair, rates);
+  return (
+    <section className="border border-[#262d38] bg-[#161b22]">
+      <PanelHeader title="Quick close" meta="market exit" />
+      <div className="grid gap-3 p-3 lg:grid-cols-[150px_minmax(150px,1fr)_180px] lg:items-end">
+        <label className="text-[10px] uppercase text-[#768390]">
+          Scope
+          <select
+            value={scope}
+            disabled={submitting}
+            onChange={(event) => onScopeChange(event.target.value as QuickCloseScope)}
+            className="mt-1 h-9 w-full border border-[#262d38] bg-[#0d1117] px-2 font-mono text-xs text-[#e6edf3] disabled:opacity-50"
+          >
+            <option value="PAIR">Currency pair</option>
+            <option value="ACCOUNT">Entire account</option>
+          </select>
+        </label>
+        <label className="text-[10px] uppercase text-[#768390]">
+          Currency pair
+          <select
+            value={selectedPair}
+            disabled={submitting || scope === "ACCOUNT" || rates.length === 0}
+            onChange={(event) => onPairChange(event.target.value)}
+            className="mt-1 h-9 w-full border border-[#262d38] bg-[#0d1117] px-2 font-mono text-xs text-[#e6edf3] disabled:opacity-50"
+          >
+            {rates.map((rate) => (
+              <option key={rate.currencyPair} value={rate.currencyPair}>
+                {rate.currencyPair}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={submitting || (scope === "PAIR" && rates.length === 0)}
+          onClick={onSubmit}
+          className="h-9 border border-[#f85149]/70 px-3 font-mono text-[11px] uppercase text-[#f85149] hover:bg-[#f85149]/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitting ? "Closing..." : "Execute quick close"}
+        </button>
+      </div>
+      {error ? (
+        <div className="border-t border-[#262d38] px-3 py-2 text-xs text-[#f85149]">{error}</div>
+      ) : result ? (
+        <div className="border-t border-[#262d38] px-3 py-2">
+          <div className="font-mono text-[11px] text-[#adbac7]">
+            Target {result.targetCount} / Closed {result.successCount} / Failed {result.failureCount}
+          </div>
+          {result.failures.length > 0 ? (
+            <div className="mt-2 space-y-1">
+              {result.failures.map((failure) => (
+                <div key={failure.positionId} className="font-mono text-[11px] text-[#f85149]">
+                  #{failure.positionId} {failure.currencyPair}: {failure.reason}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function AccountMetric({
   label,
   tone,
@@ -1983,7 +2108,7 @@ export function ExecutionHistoryPanel({
   return (
     <section className="min-h-0 flex-1 overflow-hidden border border-[#262d38] bg-[#161b22]">
       <PanelHeader title="Execution history" meta={`${trades.length} fills`} />
-      <div className="grid grid-cols-[74px_76px_54px_1fr_1fr_64px_72px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
+      <div className="grid grid-cols-[74px_76px_54px_1fr_1fr_64px_112px] gap-2 border-b border-[#262d38] px-3 py-2 font-mono text-[10px] uppercase text-[#768390]">
         <span>Time</span>
         <span>Pair</span>
         <span>Side</span>
@@ -2022,7 +2147,7 @@ function TradeRow({
     <button
       type="button"
       onClick={() => onSelectPair(trade.currencyPair)}
-      className="grid w-full grid-cols-[74px_76px_54px_1fr_1fr_64px_72px] gap-2 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] hover:bg-[#1b222b]"
+      className="grid w-full grid-cols-[74px_76px_54px_1fr_1fr_64px_112px] gap-2 border-b border-[#202832] px-3 py-3 text-left font-mono text-[11px] hover:bg-[#1b222b]"
     >
       <span className="text-[#768390]">{formatTime(trade.executedAt)}</span>
       <span className="text-[#e6edf3]">{trade.currencyPair}</span>
@@ -2030,7 +2155,7 @@ function TradeRow({
       <span className="text-right text-[#adbac7]">{formatQuantity(trade.quantity)}</span>
       <span className="text-right text-[#adbac7]">{formatPrice(trade.price, trade.currencyPair)}</span>
       <span className={kindClass}>{trade.tradeKind ?? "--"}</span>
-      <span className="text-[#768390]">--</span>
+      <span className="text-[10px] text-[#768390]">{formatOrderSource(trade.source)}</span>
     </button>
   );
 }
@@ -3211,4 +3336,25 @@ export function formatTime(value: string): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Market data could not be loaded.";
+}
+
+function formatOrderSource(source: TradeSummary["source"]): string {
+  switch (source) {
+    case "QUICK_CLOSE":
+      return "クイック全決済";
+    case "LOSS_CUT":
+      return "ロスカット";
+    case "TRIGGER":
+      return "トリガー";
+    case "MANUAL":
+      return "手動";
+    default:
+      return "手動";
+  }
+}
+
+function resolveQuickClosePair(pair: string, rates: MarketRate[]): string {
+  return rates.some((rate) => rate.currencyPair === pair)
+    ? pair
+    : rates[0]?.currencyPair ?? pair;
 }

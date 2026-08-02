@@ -10,9 +10,12 @@ import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderRequest;
 import com.example.fx.demo.backend.position.dto.PositionOcoOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
+import com.example.fx.demo.backend.position.dto.QuickCloseRequest;
+import com.example.fx.demo.backend.position.dto.QuickCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionSwapTransferResponse;
 import com.example.fx.demo.backend.position.dto.SwapTransferAllResponse;
 import com.example.fx.demo.backend.position.service.SwapTransferService;
+import com.example.fx.demo.backend.position.service.QuickCloseService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,15 +33,18 @@ import java.util.List;
 public class PositionController {
 
     private final PositionService positionService;
+    private final QuickCloseService quickCloseService;
     private final SwapTransferService swapTransferService;
     private final TriggerOrderService triggerOrderService;
 
     public PositionController(
             PositionService positionService,
+            QuickCloseService quickCloseService,
             SwapTransferService swapTransferService,
             TriggerOrderService triggerOrderService
     ) {
         this.positionService = positionService;
+        this.quickCloseService = quickCloseService;
         this.swapTransferService = swapTransferService;
         this.triggerOrderService = triggerOrderService;
     }
@@ -58,6 +64,11 @@ public class PositionController {
     @PostMapping("/positions/{id}/close")
     public PositionCloseResponse closePosition(@PathVariable Long id) {
         return positionService.closePosition(id);
+    }
+
+    @PostMapping("/positions/quick-close")
+    public QuickCloseResponse quickClose(@RequestBody QuickCloseRequest request) {
+        return quickCloseService.quickClose(request);
     }
 
     @PostMapping("/positions/{id}/swap-transfer")

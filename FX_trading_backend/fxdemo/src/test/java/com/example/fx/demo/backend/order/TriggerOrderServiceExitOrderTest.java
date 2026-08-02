@@ -614,7 +614,8 @@ class TriggerOrderServiceExitOrderTest {
                         now,
                         "CLOSE",
                         1L,
-                        new BigDecimal("1000")
+                        new BigDecimal("1000"),
+                        OrderSource.TRIGGER.name()
                 )
         );
         return new PositionCloseResponse(
@@ -654,7 +655,8 @@ class TriggerOrderServiceExitOrderTest {
                         now,
                         "OPEN",
                         1L,
-                        null
+                        null,
+                        OrderSource.TRIGGER.name()
                 )
         );
     }

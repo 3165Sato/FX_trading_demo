@@ -16,6 +16,8 @@ import type {
   PendingOrder,
   PnlSummary,
   PositionSummary,
+  QuickCloseResult,
+  QuickCloseScope,
   SpreadStats,
   TradeSummary,
 } from "../../lib/marketRateTicks";
@@ -38,6 +40,7 @@ import {
   PositionDetailPanel,
   PositionsTable,
   PriceReferencePanel,
+  QuickClosePanel,
   RateBoardRow,
   StatusItem,
   TickLogPanel,
@@ -298,6 +301,11 @@ export function TradingScreen({
   pendingOrderAmendment,
   positions,
   pnlSummary,
+  quickCloseError,
+  quickClosePair,
+  quickCloseResult,
+  quickCloseScope,
+  quickCloseSubmitting,
   rates,
   selectedPosition,
   selectedRate,
@@ -325,6 +333,8 @@ export function TradingScreen({
   onIfoTakeProfitPriceChange,
   onComplexOrderKindChange,
   onQuantityChange,
+  onQuickClosePairChange,
+  onQuickCloseScopeChange,
   onOrderTypeChange,
   onOrderPanelModeChange,
   onSelectPair,
@@ -338,6 +348,7 @@ export function TradingScreen({
   onSubmitIfoOrder,
   onSubmitOcoOrder,
   onSubmitPendingOrderAmendment,
+  onSubmitQuickClose,
   onPendingOrderAmendmentChange,
   onTransferAllSwaps,
   onTransferPositionSwap,
@@ -367,6 +378,11 @@ export function TradingScreen({
   pendingOrderAmendment: { id: number; quantity: string; triggerPrice: string } | null;
   positions: PositionSummary[];
   pnlSummary: PnlSummary | null;
+  quickCloseError: string | null;
+  quickClosePair: string;
+  quickCloseResult: QuickCloseResult | null;
+  quickCloseScope: QuickCloseScope;
+  quickCloseSubmitting: boolean;
   rates: MarketRate[];
   selectedPosition: PositionSummary | null;
   selectedRate?: MarketRate;
@@ -394,6 +410,8 @@ export function TradingScreen({
   onIfoTakeProfitPriceChange: (price: string) => void;
   onComplexOrderKindChange: (kind: ComplexOrderKind) => void;
   onQuantityChange: (quantity: string) => void;
+  onQuickClosePairChange: (currencyPair: string) => void;
+  onQuickCloseScopeChange: (scope: QuickCloseScope) => void;
   onOrderTypeChange: (orderType: OrderType) => void;
   onOrderPanelModeChange: (mode: OrderPanelMode) => void;
   onSelectPair: (currencyPair: string) => void;
@@ -410,6 +428,7 @@ export function TradingScreen({
   onSubmitIfoOrder: (side: OrderSide) => void;
   onSubmitOcoOrder: (position: PositionSummary) => void;
   onSubmitPendingOrderAmendment: () => void;
+  onSubmitQuickClose: () => void;
   onPendingOrderAmendmentChange: (field: "quantity" | "triggerPrice", value: string) => void;
   onTransferAllSwaps: () => void;
   onTransferPositionSwap: (position: PositionSummary) => void;
@@ -469,6 +488,17 @@ export function TradingScreen({
         </div>
 
         <div className="flex min-w-0 flex-col gap-4">
+          <QuickClosePanel
+            error={quickCloseError}
+            pair={quickClosePair}
+            rates={rates}
+            result={quickCloseResult}
+            scope={quickCloseScope}
+            submitting={quickCloseSubmitting}
+            onPairChange={onQuickClosePairChange}
+            onScopeChange={onQuickCloseScopeChange}
+            onSubmit={onSubmitQuickClose}
+          />
           <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
             <PositionsTable
               positions={positions}
