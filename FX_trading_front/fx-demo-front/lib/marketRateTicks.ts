@@ -63,6 +63,7 @@ export type MarketAlert = {
 
 export type OrderSide = "BUY" | "SELL";
 export type OrderType = "MARKET" | "LIMIT" | "STOP";
+export type OrderSource = "MANUAL" | "LOSS_CUT" | "TRIGGER" | "QUICK_CLOSE";
 export type PendingOrderStatus = "PENDING" | "WAITING" | "TRIGGERED" | "CANCELED" | "CANCELLED" | "REJECTED" | "EXPIRED";
 export type ExitOrderType = "TP" | "SL";
 
@@ -77,6 +78,7 @@ export type TradeSummary = {
   tradeKind?: "OPEN" | "CLOSE";
   positionId?: number | null;
   realizedPnl?: number | null;
+  source: OrderSource;
 };
 
 export type OrderSummary = {
@@ -86,7 +88,7 @@ export type OrderSummary = {
   orderType: OrderType;
   quantity: number;
   status: string;
-  source: "MANUAL" | "LOSS_CUT" | "TRIGGER";
+  source: OrderSource;
   requestedAt: string;
 };
 
@@ -173,6 +175,29 @@ export type PositionCloseResult = {
   realizedCurrency: string;
   closedAt: string;
   execution: OrderResult;
+};
+
+export type QuickCloseScope = "PAIR" | "ACCOUNT";
+
+export type QuickCloseRequest = {
+  scope: QuickCloseScope;
+  currencyPair?: string;
+};
+
+export type QuickCloseFailure = {
+  positionId: number;
+  currencyPair: string;
+  reason: string;
+};
+
+export type QuickCloseResult = {
+  scope: QuickCloseScope;
+  currencyPair: string | null;
+  targetCount: number;
+  successCount: number;
+  failureCount: number;
+  successes: PositionCloseResult[];
+  failures: QuickCloseFailure[];
 };
 
 export type PnlSummary = {
@@ -571,6 +596,17 @@ export async function cancelPositionExitOrder(
   const requestUrl = `${getApiBaseUrl()}/api/trade/positions/${positionId}/exit-orders/${exitOrderId}`;
 
   return fetchWithRetry<PositionExitOrder>(requestUrl, { method: "DELETE" });
+}
+
+export async function quickClosePositions(
+  request: QuickCloseRequest,
+): Promise<QuickCloseResult> {
+  const requestUrl = `${getApiBaseUrl()}/api/trade/positions/quick-close`;
+
+  return fetchWithRetry<QuickCloseResult>(requestUrl, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }
 
 export async function amendPositionExitOrder(

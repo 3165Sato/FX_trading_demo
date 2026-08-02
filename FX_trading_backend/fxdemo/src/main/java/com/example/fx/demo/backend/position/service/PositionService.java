@@ -12,6 +12,7 @@ import com.example.fx.demo.backend.common.enums.OrderStatus;
 import com.example.fx.demo.backend.common.enums.OrderType;
 import com.example.fx.demo.backend.common.enums.PositionSide;
 import com.example.fx.demo.backend.common.enums.PositionStatus;
+import com.example.fx.demo.backend.common.enums.QuickCloseScope;
 import com.example.fx.demo.backend.common.enums.SwapRealizationSource;
 import com.example.fx.demo.backend.common.enums.TradeKind;
 import com.example.fx.demo.backend.common.enums.TriggerOrderPurpose;
@@ -35,6 +36,7 @@ import com.example.fx.demo.backend.position.dto.PnlSummaryResponse;
 import com.example.fx.demo.backend.position.dto.PositionCloseResponse;
 import com.example.fx.demo.backend.position.dto.PositionExitOrderResponse;
 import com.example.fx.demo.backend.position.dto.PositionResponse;
+import com.example.fx.demo.backend.position.model.QuickCloseTarget;
 import com.example.fx.demo.backend.position.repository.SwapRealizationRepository;
 import com.example.fx.demo.backend.trade.service.AccountTradeLockService;
 import com.example.fx.demo.backend.trade.config.DemoTradingAccountInitializer;
@@ -135,6 +137,36 @@ public class PositionService {
                         midRates,
                         exitOrdersByPosition.getOrDefault(position.getId(), List.of())
                 ))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<QuickCloseTarget> findOpenQuickCloseTargetsForLockedAccount(
+            QuickCloseScope scope,
+            String currencyPair
+    ) {
+        Account account = defaultAccount();
+        List<Position> positions;
+        if (scope == QuickCloseScope.PAIR) {
+            currencyPairRepository.findBySymbol(currencyPair)
+                    .filter(pair -> Boolean.TRUE.equals(pair.getEnabled()))
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Currency pair not found: " + currencyPair
+                    ));
+            positions = positionRepository.findByAccountIdAndCurrencyPairAndStatusOrderByOpenedAtAsc(
+                    account.getId(),
+                    currencyPair,
+                    PositionStatus.OPEN
+            );
+        } else {
+            positions = positionRepository.findByAccountIdAndStatusOrderByOpenedAtAsc(
+                    account.getId(),
+                    PositionStatus.OPEN
+            );
+        }
+        return positions.stream()
+                .map(position -> new QuickCloseTarget(position.getId(), position.getCurrencyPair()))
                 .toList();
     }
 
@@ -308,7 +340,7 @@ public class PositionService {
                 realizedSwap,
                 currencyPair.getQuoteCurrency(),
                 now,
-                new OrderResultResponse(toOrderResponse(order), toTradeResponse(trade))
+                new OrderResultResponse(toOrderResponse(order), toTradeResponse(trade, order.getSource()))
         );
     }
 
@@ -648,7 +680,7 @@ public class PositionService {
         );
     }
 
-    private TradeSummaryResponse toTradeResponse(Trade trade) {
+    private TradeSummaryResponse toTradeResponse(Trade trade, OrderSource source) {
         return new TradeSummaryResponse(
                 trade.getId(),
                 trade.getOrderId(),
@@ -659,7 +691,8 @@ public class PositionService {
                 trade.getExecutedAt(),
                 trade.getTradeKind() == null ? TradeKind.OPEN.name() : trade.getTradeKind().name(),
                 trade.getPositionId(),
-                trade.getRealizedPnl()
+                trade.getRealizedPnl(),
+                source == null ? OrderSource.MANUAL.name() : source.name()
         );
     }
 }

@@ -179,7 +179,8 @@ class TradeExecutionServiceLossCutTest {
                         now,
                         "CLOSE",
                         positionId,
-                        new BigDecimal("-100")
+                        new BigDecimal("-100"),
+                        OrderSource.LOSS_CUT.name()
                 )
         );
         return new PositionCloseResponse(

@@ -39,6 +39,9 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 public class TradeExecutionService {
@@ -229,7 +232,7 @@ public class TradeExecutionService {
         savedTrade.setPositionId(position.getId());
         savedTrade = tradeRepository.save(savedTrade);
 
-        return new OrderResultResponse(toOrderResponse(savedOrder), toTradeResponse(savedTrade));
+        return new OrderResultResponse(toOrderResponse(savedOrder), toTradeResponse(savedTrade, savedOrder.getSource()));
     }
 
     @Transactional(readOnly = true)
@@ -238,7 +241,19 @@ public class TradeExecutionService {
         List<Trade> trades = currencyPair == null || currencyPair.isBlank()
                 ? tradeRepository.findAllByOrderByExecutedAtDesc(page)
                 : tradeRepository.findByCurrencyPairOrderByExecutedAtDesc(currencyPair, page);
-        return trades.stream().map(this::toTradeResponse).toList();
+        Map<Long, OrderSource> sourceByOrderId = fxOrderRepository.findAllById(
+                        trades.stream().map(Trade::getOrderId).filter(Objects::nonNull).distinct().toList()
+                ).stream()
+                .collect(Collectors.toMap(
+                        FxOrder::getId,
+                        order -> order.getSource() == null ? OrderSource.MANUAL : order.getSource()
+                ));
+        return trades.stream()
+                .map(trade -> toTradeResponse(
+                        trade,
+                        sourceByOrderId.getOrDefault(trade.getOrderId(), OrderSource.MANUAL)
+                ))
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -292,7 +307,7 @@ public class TradeExecutionService {
         );
     }
 
-    private TradeSummaryResponse toTradeResponse(Trade trade) {
+    private TradeSummaryResponse toTradeResponse(Trade trade, OrderSource source) {
         return new TradeSummaryResponse(
                 trade.getId(),
                 trade.getOrderId(),
@@ -303,7 +318,8 @@ public class TradeExecutionService {
                 trade.getExecutedAt(),
                 trade.getTradeKind() == null ? TradeKind.OPEN.name() : trade.getTradeKind().name(),
                 trade.getPositionId(),
-                trade.getRealizedPnl()
+                trade.getRealizedPnl(),
+                source == null ? OrderSource.MANUAL.name() : source.name()
         );
     }
 }

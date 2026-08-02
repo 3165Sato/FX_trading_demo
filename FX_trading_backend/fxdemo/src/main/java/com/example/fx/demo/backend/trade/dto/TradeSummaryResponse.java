@@ -13,6 +13,7 @@ public record TradeSummaryResponse(
         LocalDateTime executedAt,
         String tradeKind,
         Long positionId,
-        BigDecimal realizedPnl
+        BigDecimal realizedPnl,
+        String source
 ) {
 }

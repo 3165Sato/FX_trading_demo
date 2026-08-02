@@ -38,7 +38,7 @@ public class OrderSchemaInitializer implements CommandLineRunner {
                 "fx_orders",
                 "fx_orders_source_check",
                 "source",
-                "'MANUAL', 'LOSS_CUT', 'TRIGGER'"
+                "'MANUAL', 'LOSS_CUT', 'TRIGGER', 'QUICK_CLOSE'"
         );
         recreateCheckConstraint(
                 "positions",
